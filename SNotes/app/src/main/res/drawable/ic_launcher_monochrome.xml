@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <group
+        android:pivotX="54"
+        android:pivotY="54"
+        android:scaleX="0.45"
+        android:scaleY="0.45">
+
+        <group android:translateX="4.5">
+
+            <!-- Outline set to white so the monochrome engine tints it -->
+            <path
+                android:strokeColor="#FFFFFF"
+                android:strokeWidth="7"
+                android:fillColor="#00000000"
+                android:pathData="M 21,14 h 56 a 6,6 0 0 1 6,6 v 68 a 6,6 0 0 1 -6,6 h -56 a 6,6 0 0 1 -6,-6 v -68 a 6,6 0 0 1 6,-6 z"/>
+
+            <!-- Spirals set to white -->
+            <path
+                android:strokeColor="#FFFFFF"
+                android:strokeWidth="5"
+                android:strokeLineCap="round"
+                android:pathData="M 16,28 h 16  M 16,41 h 16  M 16,54 h 16  M 16,67 h 16 M 16,80 h 16"/>
+
+            <!-- Text dots set to white -->
+            <path
+                android:strokeColor="#FFFFFF"
+                android:strokeWidth="3.5"
+                android:strokeLineCap="round"
+                android:pathData="
+                    M 52,38 v 0.01 M 56,38 v 0.01 M 60,38 v 0.01 M 64,38 v 0.01
+                    M 48,42 v 0.01 M 52,42 v 0.01 M 56,42 v 0.01 M 60,42 v 0.01 M 64,42 v 0.01 M 68,42 v 0.01
+                    M 44,46 v 0.01 M 48,46 v 0.01 M 52,46 v 0.01
+                    M 44,50 v 0.01 M 48,50 v 0.01 M 52,50 v 0.01 M 56,50 v 0.01
+                    M 48,54 v 0.01 M 52,54 v 0.01 M 56,54 v 0.01 M 60,54 v 0.01
+                    M 52,58 v 0.01 M 56,58 v 0.01 M 60,58 v 0.01 M 64,58 v 0.01
+                    M 56,62 v 0.01 M 60,62 v 0.01 M 64,62 v 0.01 M 68,62 v 0.01
+                    M 60,66 v 0.01 M 64,66 v 0.01 M 68,66 v 0.01
+                    M 44,70 v 0.01 M 48,70 v 0.01 M 52,70 v 0.01 M 56,70 v 0.01 M 60,70 v 0.01 M 64,70 v 0.01
+                    M 48,74 v 0.01 M 52,74 v 0.01 M 56,74 v 0.01 M 60,74 v 0.01" />
+
+            <!-- Accent dot set to white -->
+            <path
+                android:fillColor="#FFFFFF"
+                android:pathData="M 76,27 a 3.5,3.5 0 1,0 -7,0 a 3.5,3.5 0 1,0 7,0" />
+
+        </group>
+    </group>
+</vector>

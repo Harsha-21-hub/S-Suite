@@ -1,0 +1,523 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Requirement 5 - the top bar is now ONE taller row laid out as:
+
+      [back] [NOTE NAME + saved/created] [ ...toolkit... ] [undo] [redo] [theme] [share] [hide]
+
+  so the toolkit physically sits between the notebook name and undo/redo.
+  The toolkit is inside a HorizontalScrollView with fillViewport + centre
+  gravity: it stays centred on a tablet and scrolls instead of squashing on a
+  phone. Every control is bigger (see ToolBtn / TopBtn in styles.xml).
+-->
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent">
+
+    <com.hesi.snotes.DrawingView
+        android:id="@+id/drawing"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent" />
+
+    <LinearLayout
+        android:id="@+id/topBar"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_gravity="top"
+        android:orientation="vertical"
+        android:elevation="6dp">
+
+        <!--
+          The whole row lives in a HorizontalScrollView with fillViewport=true.
+          On a tablet everything fits and the weighted toolkit expands, so the
+          icons sit centred between the note name and undo/redo. On a narrow
+          phone the row simply scrolls instead of clipping or squashing.
+        -->
+        <HorizontalScrollView
+            android:id="@+id/toolRowScroll"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:fillViewport="true"
+            android:scrollbars="none">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:minHeight="76dp"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:paddingHorizontal="6dp"
+            android:paddingVertical="6dp">
+
+            <ImageButton
+                android:id="@+id/btnBack"
+                style="@style/ToolBtn"
+                android:src="@drawable/ic_back"
+                android:contentDescription="Back" />
+
+            <!-- Notebook name + last saved / created -->
+            <LinearLayout
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:minWidth="120dp"
+                android:maxWidth="230dp"
+                android:paddingHorizontal="6dp">
+
+                <TextView
+                    android:id="@+id/txtTitle"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:textSize="17sp"
+                    android:textStyle="bold"
+                    android:fontFamily="monospace"
+                    android:letterSpacing="0.16"
+                    android:maxLines="1"
+                    android:ellipsize="end"
+                    android:text="NOTE" />
+
+            </LinearLayout>
+
+            <!-- ===== TOOLKIT (centre) ===== -->
+                <LinearLayout
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:orientation="horizontal"
+                    android:gravity="center">
+
+                    <FrameLayout
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content">
+                        <ImageButton
+                            android:id="@+id/btnPen"
+                            style="@style/ToolBtn"
+                            android:src="@drawable/ic_pen"
+                            android:contentDescription="Pen (tap again for options)" />
+                        <ImageView
+                            style="@style/ToolChevron"
+                            android:src="@drawable/ic_chevron_down" />
+                    </FrameLayout>
+
+                    <FrameLayout
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content">
+                        <ImageButton
+                            android:id="@+id/btnEraser"
+                            style="@style/ToolBtn"
+                            android:src="@drawable/ic_eraser"
+                            android:contentDescription="Eraser (tap again for options)" />
+                        <ImageView
+                            style="@style/ToolChevron"
+                            android:src="@drawable/ic_chevron_down" />
+                    </FrameLayout>
+
+                    <FrameLayout
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content">
+                        <ImageButton
+                            android:id="@+id/btnStrokeEraser"
+                            style="@style/ToolBtn"
+                            android:src="@drawable/ic_stroke_eraser"
+                            android:contentDescription="Stroke eraser (tap again for options)" />
+                        <ImageView
+                            style="@style/ToolChevron"
+                            android:src="@drawable/ic_chevron_down" />
+                    </FrameLayout>
+
+                    <FrameLayout
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content">
+                        <ImageButton
+                            android:id="@+id/btnLaser"
+                            style="@style/ToolBtn"
+                            android:src="@drawable/ic_laser"
+                            android:contentDescription="Laser pointer (tap again for options)" />
+                        <ImageView
+                            style="@style/ToolChevron"
+                            android:src="@drawable/ic_chevron_down" />
+                    </FrameLayout>
+
+                    <ImageButton
+                        android:id="@+id/btnSelect"
+                        style="@style/ToolBtn"
+                        android:src="@drawable/ic_select"
+                        android:contentDescription="Select" />
+
+                    <FrameLayout
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content">
+                        <ImageButton
+                            android:id="@+id/btnShapes"
+                            style="@style/ToolBtn"
+                            android:src="@drawable/ic_shapes"
+                            android:contentDescription="Shapes (tap for options)" />
+                        <ImageView
+                            style="@style/ToolChevron"
+                            android:src="@drawable/ic_chevron_down" />
+                    </FrameLayout>
+
+                    <!-- Requirement C4: text + image inserts, always available -->
+                    <ImageButton
+                        android:id="@+id/btnText"
+                        style="@style/ToolBtn"
+                        android:src="@drawable/ic_text"
+                        android:contentDescription="@string/insert_text" />
+
+                    <ImageButton
+                        android:id="@+id/btnImage"
+                        style="@style/ToolBtn"
+                        android:src="@drawable/ic_image"
+                        android:contentDescription="@string/insert_image" />
+
+                    <!-- Palm rejection is its own tool button now -->
+                    <ImageButton
+                        android:id="@+id/btnStylus"
+                        style="@style/ToolBtn"
+                        android:src="@drawable/ic_stylus"
+                        android:contentDescription="@string/stylus_only" />
+
+                    <ImageButton
+                        android:id="@+id/btnPresets"
+                        style="@style/ToolBtn"
+                        android:src="@drawable/ic_preset"
+                        android:contentDescription="Presets" />
+
+                    <ImageButton
+                        android:id="@+id/btnClear"
+                        style="@style/ToolBtn"
+                        android:src="@drawable/ic_delete"
+                        android:contentDescription="Clear all" />
+                </LinearLayout>
+
+            <!-- ===== Undo / redo / document actions ===== -->
+            <ImageButton
+                android:id="@+id/btnReset"
+                style="@style/ToolBtn"
+                android:src="@drawable/ic_zoom_reset"
+                android:contentDescription="@string/reset_zoom" />
+
+            <ImageButton
+                android:id="@+id/btnUndo"
+                style="@style/ToolBtn"
+                android:src="@drawable/ic_undo"
+                android:contentDescription="Undo" />
+
+            <ImageButton
+                android:id="@+id/btnRedo"
+                style="@style/ToolBtn"
+                android:src="@drawable/ic_redo"
+                android:contentDescription="Redo" />
+
+            <ImageButton
+                android:id="@+id/btnTheme"
+                style="@style/ToolBtn"
+                android:src="@drawable/ic_theme"
+                android:contentDescription="Theme" />
+
+            <ImageButton
+                android:id="@+id/btnShare"
+                style="@style/ToolBtn"
+                android:src="@drawable/ic_share"
+                android:contentDescription="Export" />
+
+            <ImageButton
+                android:id="@+id/btnHide"
+                style="@style/ToolBtn"
+                android:src="@drawable/ic_hide"
+                android:contentDescription="Hide toolbars" />
+        </LinearLayout>
+        </HorizontalScrollView>
+    </LinearLayout>
+
+    <!-- PEN DROPDOWN -->
+    <LinearLayout
+        android:id="@+id/panelPen"
+        android:layout_width="344dp"
+        android:layout_height="wrap_content"
+        android:layout_gravity="top|start"
+        android:layout_marginTop="92dp"
+        android:orientation="vertical"
+        android:paddingHorizontal="18dp"
+        android:paddingVertical="14dp"
+        android:elevation="10dp"
+        android:visibility="gone">
+
+        <LinearLayout
+            android:id="@+id/panelPalette"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical" />
+
+        <TextView
+            android:id="@+id/txtPenVal"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="10dp"
+            android:fontFamily="monospace"
+            android:letterSpacing="0.12"
+            android:textSize="13sp"
+            android:text="SIZE 5" />
+
+        <SeekBar
+            android:id="@+id/seekPen"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:min="1"
+            android:max="40"
+            android:progress="5" />
+
+    </LinearLayout>
+
+    <!-- ERASER DROPDOWN -->
+    <LinearLayout
+        android:id="@+id/panelEraser"
+        android:layout_width="288dp"
+        android:layout_height="wrap_content"
+        android:layout_gravity="top|start"
+        android:layout_marginTop="92dp"
+        android:orientation="vertical"
+        android:paddingHorizontal="18dp"
+        android:paddingVertical="14dp"
+        android:elevation="10dp"
+        android:visibility="gone">
+
+        <TextView
+            android:id="@+id/txtEraserVal"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:fontFamily="monospace"
+            android:letterSpacing="0.12"
+            android:textSize="13sp"
+            android:text="SIZE 36" />
+
+        <SeekBar
+            android:id="@+id/seekEraser"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:min="8"
+            android:max="120"
+            android:progress="36" />
+    </LinearLayout>
+
+    <!-- LASER DROPDOWN: trail thickness -->
+    <LinearLayout
+        android:id="@+id/panelLaser"
+        android:layout_width="288dp"
+        android:layout_height="wrap_content"
+        android:layout_gravity="top|start"
+        android:layout_marginTop="92dp"
+        android:orientation="vertical"
+        android:paddingHorizontal="18dp"
+        android:paddingVertical="14dp"
+        android:elevation="10dp"
+        android:visibility="gone">
+
+        <TextView
+            android:id="@+id/txtLaserVal"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:fontFamily="monospace"
+            android:letterSpacing="0.12"
+            android:textSize="13sp"
+            android:text="SIZE 6" />
+
+        <SeekBar
+            android:id="@+id/seekLaser"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:min="2"
+            android:max="24"
+            android:progress="6" />
+    </LinearLayout>
+
+    <!-- SHAPES DROPDOWN: manual shapes only, auto-detect has been removed -->
+    <LinearLayout
+        android:id="@+id/panelShapes"
+        android:layout_width="360dp"
+        android:layout_height="wrap_content"
+        android:layout_gravity="top|start"
+        android:layout_marginTop="92dp"
+        android:orientation="vertical"
+        android:paddingHorizontal="14dp"
+        android:paddingVertical="14dp"
+        android:clipToPadding="false"
+        android:elevation="10dp"
+        android:visibility="gone">
+
+        <TextView
+            android:id="@+id/txtShapesTitle"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:fontFamily="monospace"
+            android:letterSpacing="0.12"
+            android:textSize="12sp"
+            android:text="@string/draw_exact_shape" />
+
+        <!-- vertically scrollable shape chooser grid (preview + name), built in code -->
+        <ScrollView
+            android:id="@+id/shapeScroll"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:maxHeight="270dp"
+            android:scrollbars="none"
+            android:fillViewport="false">
+
+            <LinearLayout
+                android:id="@+id/shapeGrid"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical" />
+        </ScrollView>
+
+        <TextView
+            android:id="@+id/txtShapeVal"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:fontFamily="monospace"
+            android:letterSpacing="0.10"
+            android:textSize="12sp"
+            android:text="@string/shape_size" />
+
+        <SeekBar
+            android:id="@+id/seekShape"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="2dp"
+            android:max="38"
+            android:progress="6" />
+    </LinearLayout>
+
+    <!-- SELECTION BAR -->
+    <LinearLayout
+        android:id="@+id/selectionBar"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom|center_horizontal"
+        android:layout_marginBottom="28dp"
+        android:orientation="horizontal"
+        android:elevation="8dp"
+        android:visibility="gone">
+
+        <TextView
+            android:id="@+id/btnSelDelete"
+            style="@style/PillBtn"
+            android:text="@string/delete" />
+
+        <TextView
+            android:id="@+id/btnSelDone"
+            style="@style/PillBtn"
+            android:layout_marginStart="10dp"
+            android:text="@string/deselect" />
+    </LinearLayout>
+
+    <!-- DIRECT OBJECT EDITOR: stays on the canvas; no modal dialog. -->
+    <LinearLayout
+        android:id="@+id/objectEditor"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom|center_horizontal"
+        android:layout_marginStart="16dp"
+        android:layout_marginEnd="16dp"
+        android:layout_marginBottom="22dp"
+        android:orientation="vertical"
+        android:paddingHorizontal="16dp"
+        android:paddingVertical="12dp"
+        android:background="@drawable/bg_dialog_dark"
+        android:elevation="14dp"
+        android:visibility="gone">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="center_vertical">
+
+            <TextView
+                android:id="@+id/objectEditorTitle"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="@string/edit_text"
+                android:textColor="#FFFFFF"
+                android:textSize="12sp"
+                android:textStyle="bold"
+                android:fontFamily="monospace"
+                android:letterSpacing="0.10" />
+
+            <TextView
+                android:id="@+id/objectDelete"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:paddingHorizontal="12dp"
+                android:paddingVertical="7dp"
+                android:text="@string/delete"
+                android:textColor="#8A8A8A"
+                android:textSize="11sp"
+                android:textStyle="bold"
+                android:fontFamily="monospace"
+                android:background="?attr/selectableItemBackgroundBorderless" />
+
+            <TextView
+                android:id="@+id/objectDone"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:paddingHorizontal="12dp"
+                android:paddingVertical="7dp"
+                android:text="@string/done"
+                android:textColor="@color/nothing_red"
+                android:textSize="11sp"
+                android:textStyle="bold"
+                android:fontFamily="monospace"
+                android:background="?attr/selectableItemBackgroundBorderless" />
+        </LinearLayout>
+
+        <EditText
+            android:id="@+id/objectTextField"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:background="@drawable/bg_field_dark"
+            android:paddingHorizontal="12dp"
+            android:paddingVertical="8dp"
+            android:inputType="textCapSentences|textMultiLine"
+            android:maxLines="3"
+            android:hint="@string/type_here"
+            android:textColor="#FFFFFF"
+            android:textColorHint="#8A8A8A"
+            android:textSize="14sp"
+            android:fontFamily="monospace"
+            android:importantForAutofill="no" />
+
+        <TextView
+            android:id="@+id/objectSizeLabel"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:text="@string/text_size"
+            android:textColor="#8A8A8A"
+            android:textSize="10sp"
+            android:fontFamily="monospace"
+            android:letterSpacing="0.08" />
+
+        <SeekBar
+            android:id="@+id/objectSize"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:max="180"
+            android:progress="64" />
+    </LinearLayout>
+
+    <!-- SHOW-TOOLBARS FLOATING BUTTON -->
+    <ImageButton
+        android:id="@+id/btnShow"
+        android:layout_width="50dp"
+        android:layout_height="50dp"
+        android:layout_gravity="top|end"
+        android:layout_margin="12dp"
+        android:src="@drawable/ic_show"
+        android:elevation="8dp"
+        android:contentDescription="Show toolbars"
+        android:visibility="gone" />
+</FrameLayout>

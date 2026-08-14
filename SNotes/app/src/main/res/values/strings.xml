@@ -1,0 +1,114 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">S Notes</string>
+    <string name="app_name_caps">S NOTES</string>
+    <string name="new_note"> NEW NOTE</string>
+    <string name="new_note_short"> NEW NOTE</string>
+    <string name="open_notebook_short">OPEN NOTE</string>
+    <string name="open_notebook">OPEN NOTEBOOK</string>
+    <string name="rename">RENAME</string>
+    <string name="delete">DELETE</string>
+    <string name="deselect">DESELECT</string>
+    <string name="cancel">CANCEL</string>
+    <string name="ok">OK</string>
+    <string name="recent">RECENT</string>
+
+    <!-- Export (requirements 4 and 8) -->
+    <string name="export">EXPORT</string>
+    <string name="share_png">SHARE AS PNG</string>
+    <string name="share_jpg">SHARE AS JPG</string>
+    <string name="share_pdf">SHARE AS PDF</string>
+    <string name="save_gallery">SAVE TO GALLERY</string>
+    <string name="share_notebook">SHARE NOTEBOOK (.HESI)</string>
+    <string name="export_theme">COLOUR SCHEME</string>
+    <string name="export_light">LIGHT  (black ink, white paper)</string>
+    <string name="export_dark">DARK  (white ink, black paper)</string>
+    <string name="export_layout">IMAGE LAYOUT</string>
+    <string name="export_single">ONE IMAGE  ·  cropped to your writing</string>
+    <string name="export_split">SPLIT INTO %1$d IMAGES  ·  A4 pages</string>
+
+    <!-- Requirement 1: the redesigned Share sheet -->
+    <string name="share_title">SHARE</string>
+    <string name="share_as">SHARE AS</string>
+    <string name="share_export">SHARE / EXPORT</string>
+    <string name="save">SAVE</string>
+    <string name="fmt_pdf">PDF</string>
+    <string name="fmt_jpg">JPG</string>
+    <string name="fmt_png">PNG</string>
+    <string name="theme_light">LIGHT</string>
+    <string name="theme_dark">DARK</string>
+
+    <!-- Requirement 9 -->
+    <string name="reset_zoom">RESET ZOOM</string>
+
+    <!-- Requirement 1: shape size (independent of pen) -->
+    <string name="shape_size">SHAPE SIZE</string>
+
+    <!-- Requirement 9/10/14: home list -->
+    <string name="last_saved">LAST SAVED</string>
+    <string name="created">CREATED</string>
+    <string name="select_all">SELECT ALL</string>
+    <string name="deselect_all">CLEAR</string>
+    <string name="selected_count">%1$d SELECTED</string>
+    <string name="guide">GUIDE</string>
+    <string name="guide_title">HOW TO USE S NOTES</string>
+    <string name="guide_body">• PEN — write or draw freely on the page.\n\n• ERASER — remove part of your drawing.\n\n• LASER — draw a temporary pointer that fades away smoothly.\n\n• SHAPES — choose a shape, then drag in any direction to draw it.\n\n• SELECT — tap an object or drag around an area to select, move, resize, rotate, or delete it.\n\n• TEXT — tap the page to add text and edit it later with Select.\n\n• IMAGE — insert an image and resize, rotate, move, or edit it.\n\n• PAGE — the page extends automatically as you continue writing.\n\n• RESET ZOOM — reset the zoom while keeping your current page position.\n\n• SHARE / EXPORT — save or share your note as PDF, JPG, or PNG.\n\n• HOME — rename, select, export, restore, or delete notes from the home page.</string>
+    <string name="close">CLOSE</string>
+    <string name="got_it">GOT IT</string>
+
+    <!-- Requirement B3: new-notebook page modes -->
+    <string name="new_notebook">NEW NOTEBOOK</string>
+    <string name="choose_page_mode">CHOOSE A PAGE STYLE</string>
+    <string name="page_infinite">INFINITE\nLENGTH</string>
+    
+    <string name="page_multi_infinite">INFINITE\nPAGES</string>
+
+    <!-- Requirement C4: text / image objects -->
+    <string name="insert_text">TEXT</string>
+    <string name="insert_image">INSERT IMAGE</string>
+    <string name="edit_image">EDIT IMAGE</string>
+    <string name="edit_text">EDIT TEXT</string>
+    <string name="type_here">Type here…</string>
+    <string name="text_size">TEXT SIZE</string>
+    <string name="image_size">IMAGE SIZE</string>
+    <string name="done">DONE</string>
+
+    <!-- Trash (requirement 3) -->
+    <string name="trash">TRASH</string>
+    <string name="restore">RESTORE</string>
+    <string name="move_to_trash">MOVE TO TRASH</string>
+    <string name="delete_forever">DELETE PERMANENTLY</string>
+    <string name="empty_trash">EMPTY TRASH</string>
+    <string name="delete_choice_q">What should happen to this note?\n\nMove it to the trash and you can get it back later. Nothing is ever removed from the trash on its own.</string>
+    <string name="delete_forever_q">This cannot be undone. Delete this note and all of its strokes permanently?</string>
+    <string name="restore_q">Move this note back out of the trash?</string>
+    <string name="empty_trash_q">Permanently delete everything in the trash? This cannot be undone.</string>
+    <string name="moved_to_trash">Moved to trash</string>
+    <string name="trash_emptied">Trash emptied</string>
+    <string name="trash_empty">TRASH IS EMPTY.</string>
+
+    <!-- Home screen (requirement 5) -->
+    <string name="no_notes">NO NOTES YET.\nTAP + NEW NOTE TO START.</string>
+    <string name="storage_line">%1$d NOTES  ·  %2$s USED</string>
+    <string name="storage_line_trash">%1$d NOTES  ·  %2$s USED  ·  %3$d IN TRASH</string>
+    <string name="item_saved">LAST SAVED %1$s</string>
+    <string name="item_created">·  CREATED %1$s</string>
+    <string name="page_type_infinite">INFINITE LENGTH</string>
+    <string name="page_type_multi">INFINITE PAGES</string>
+    <string name="note_info">NOTE INFO</string>
+    <string name="note_info_body">Storage: %1$s\nStrokes: %2$d\nCreated: %3$s\nLast saved: %4$s</string>
+
+    <!-- Tools -->
+    <string name="clear_all_q">Erase everything on this note?</string>
+    <string name="presets">PRESETS</string>
+    <string name="preset_save_current">+ SAVE CURRENT AS PRESET</string>
+    <string name="preset_delete">DELETE PRESET</string>
+    <string name="preset_name">PRESET NAME</string>
+    <string name="preset_default">DEFAULT</string>
+    <string name="preset_load">LOAD</string>
+    <string name="preset_new">+  NEW PRESET</string>
+    <string name="stylus_only">STYLUS ONLY</string>
+
+    <!-- Shapes (requirement 9) -->
+    <string name="draw_exact_shape">PICK A SHAPE, THEN DRAG ON THE PAGE:</string>
+</resources>

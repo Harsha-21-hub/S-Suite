@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- one endless page: a column with a dashed open bottom + down arrow -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="72dp" android:height="72dp" android:viewportWidth="72" android:viewportHeight="72">
+    <path android:strokeColor="#FFFFFF" android:strokeWidth="2" android:fillColor="#00000000"
+        android:pathData="M22,8 h28 v44 M22,8 v44" />
+    <path android:strokeColor="#8A8A8A" android:strokeWidth="2" android:fillColor="#00000000"
+        android:pathData="M22,52 h28" android:strokeLineCap="round"/>
+    <path android:strokeColor="#D71921" android:strokeWidth="2.5" android:fillColor="#00000000"
+        android:strokeLineCap="round" android:strokeLineJoin="round"
+        android:pathData="M36,54 v10 M31,59 l5,5 5,-5" />
+</vector>

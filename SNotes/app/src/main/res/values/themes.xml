@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+      Requirement 10 - one font everywhere.
+
+      Fonts.kt already re-types every screen and dialog at runtime from
+      assets/fonts/nothing.ttf. If you would rather have the platform do it (it
+      also covers menus, toasts and the seek bar tooltips), copy the same file
+      to  app/src/main/res/font/nothing.ttf  and uncomment the two lines below.
+      Both routes can be used at the same time.
+    -->
+    <style name="Theme.SNotes" parent="Theme.AppCompat.NoActionBar">
+        <item name="android:windowBackground">@color/pure_white</item>
+        <item name="colorAccent">@color/nothing_red</item>
+        <item name="colorPrimary">@color/nothing_red</item>
+        <item name="colorPrimaryDark">@color/pure_black</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+
+        <!-- <item name="android:fontFamily">@font/nothing</item> -->
+        <!-- <item name="fontFamily">@font/nothing</item> -->
+    </style>
+
+    <!-- Requirement G8: dark dialogs (Screens.kt palette) for system AlertDialogs
+         such as delete-confirm, storage info, presets and the guide. -->
+    <style name="SNotesDialogDark" parent="Theme.AppCompat.Dialog.Alert">
+        <item name="colorAccent">@color/nothing_red</item>
+        <item name="android:textColorPrimary">#FFFFFF</item>
+        <item name="android:textColorSecondary">#B0B0B0</item>
+        <item name="android:windowBackground">@drawable/bg_dialog_dark</item>
+        <item name="android:backgroundDimAmount">0.6</item>
+    </style>
+</resources>

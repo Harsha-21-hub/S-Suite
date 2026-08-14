@@ -1,0 +1,99 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Requirement 5: every control scaled up (~20%) across the whole app. -->
+<resources>
+    <style name="ToolBtn">
+        <item name="android:layout_width">54dp</item>
+        <item name="android:layout_height">54dp</item>
+        <item name="android:background">?attr/selectableItemBackgroundBorderless</item>
+        <item name="android:scaleType">centerInside</item>
+        <item name="android:padding">12dp</item>
+    </style>
+
+    <style name="PillBtn">
+        <item name="android:layout_width">wrap_content</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:paddingHorizontal">22dp</item>
+        <item name="android:paddingVertical">11dp</item>
+        <item name="android:textSize">14sp</item>
+        <item name="android:textStyle">bold</item>
+        <item name="android:fontFamily">monospace</item>
+        <item name="android:letterSpacing">0.15</item>
+        <item name="android:textColor">@color/pure_white</item>
+        <item name="android:background">@drawable/bg_pill_red</item>
+    </style>
+
+    <!-- Requirement B3: new-notebook page-mode cards -->
+    <style name="PageModeCard">
+        <item name="android:layout_width">0dp</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:layout_weight">1</item>
+        <item name="android:layout_marginHorizontal">4dp</item>
+        <item name="android:orientation">vertical</item>
+        <item name="android:gravity">center_horizontal</item>
+        <item name="android:paddingVertical">12dp</item>
+        <item name="android:background">@drawable/bg_field_dark</item>
+        <item name="android:clickable">true</item>
+        <item name="android:focusable">true</item>
+    </style>
+
+    <style name="PageModeImg">
+        <item name="android:layout_width">54dp</item>
+        <item name="android:layout_height">54dp</item>
+    </style>
+
+    <style name="PageModeLabel">
+        <item name="android:layout_width">wrap_content</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:layout_marginTop">8dp</item>
+        <item name="android:gravity">center</item>
+        <item name="android:textColor">#FFFFFF</item>
+        <item name="android:textSize">9sp</item>
+        <item name="android:textStyle">bold</item>
+        <item name="android:fontFamily">monospace</item>
+        <item name="android:letterSpacing">0.04</item>
+    </style>
+
+    <!-- Requirement 4: radio option in the Share sheet -->
+    <style name="ShareRadio">
+        <item name="android:layout_width">wrap_content</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:layout_marginEnd">14dp</item>
+        <item name="android:textColor">#111111</item>
+        <item name="android:textSize">14sp</item>
+        <item name="android:textStyle">bold</item>
+        <item name="android:fontFamily">monospace</item>
+        <item name="android:letterSpacing">0.06</item>
+        <item name="android:buttonTint">#D71921</item>
+    </style>
+
+    <!-- Requirement 6: little "this tool has a dropdown" chevron, pinned to the
+         bottom-end corner of a tool button. Always Nothing-red so it reads on
+         both the light and dark toolbars. -->
+    <style name="ToolChevron">
+        <item name="android:layout_width">11dp</item>
+        <item name="android:layout_height">11dp</item>
+        <item name="android:layout_gravity">bottom|end</item>
+        <item name="android:layout_marginEnd">5dp</item>
+        <item name="android:layout_marginBottom">6dp</item>
+        <item name="android:tint">@color/nothing_red</item>
+        <item name="android:contentDescription">@null</item>
+    </style>
+
+    <!-- Requirement 4: gentle fade/scale for dialogs -->
+    <style name="DialogAnim">
+        <item name="android:windowEnterAnimation">@android:anim/fade_in</item>
+        <item name="android:windowExitAnimation">@android:anim/fade_out</item>
+    </style>
+
+    <!-- Small on/off toggle chips inside the dropdowns -->
+    <style name="TogglePill">
+        <item name="android:layout_width">wrap_content</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:paddingHorizontal">14dp</item>
+        <item name="android:paddingVertical">9dp</item>
+        <item name="android:textSize">12sp</item>
+        <item name="android:textStyle">bold</item>
+        <item name="android:fontFamily">monospace</item>
+        <item name="android:letterSpacing">0.12</item>
+    </style>
+</resources>
