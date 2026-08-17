@@ -1,10 +1,10 @@
 # 🔋 S Charge
 
-S Charge is a lightweight Android battery monitoring and smart charging application designed as part of the **S Suite** ecosystem.
+S Charge is a lightweight Android battery monitoring and charging-control application developed as part of the **S-Suite** ecosystem.
 
-It provides real-time battery telemetry, battery health and capacity analysis, calibration, charging-session monitoring, and optional **Smart Charge** control on rooted devices with compatible kernels.
+It provides live battery telemetry, battery capacity and health analysis, calibration, charging-session monitoring, battery analytics, notifications, and optional **Smart Charge** control on supported rooted devices.
 
-Built around a custom **Nothing OS-inspired** dot-matrix aesthetic, S Charge keeps battery information simple, local, and easy to understand.
+S Charge is designed to work locally on the device and does not require an internet connection.
 
 ---
 
@@ -12,85 +12,95 @@ Built around a custom **Nothing OS-inspired** dot-matrix aesthetic, S Charge kee
 
 ### 🔋 Real-Time Battery Monitoring
 
-Displays live battery information including:
+S Charge displays live battery information including:
 
 - Battery percentage
-- Voltage
-- Current
-- Battery power consumption
-- Charger/input power
-- Battery temperature
+- Precise battery percentage from charge-counter telemetry
+- Battery voltage
+- Battery current
+- Battery-side power
+- Temperature
 - Charging/discharging status
+- Charger/input power
 - Present battery charge
-- Charge time information
+- Charging-time / full-charge estimates when available
 
-Monitoring features work on both **rooted and unrooted devices**, subject to the information exposed by the device's Android battery driver.
+The main battery indicator follows Android's whole-number battery level, while the precise percentage remains available for detailed telemetry and capacity calculations.
+
+Availability of individual measurements depends on what the device's Android battery driver exposes.
 
 ---
 
 ### ❤️ Battery Health
 
-Displays battery health as a percentage based on the device's design capacity and calibrated actual capacity. Battery health becomes available after completing battery capacity calibration.
+S Charge calculates battery health using the device's design capacity and the calibrated current full capacity.
+
+Battery health becomes available after the app has enough capacity information from calibration.
 
 ---
 
 ### 📏 Actual Battery Capacity
 
-S Charge can determine the battery's actual usable capacity through its calibration process.
+S Charge can estimate the battery's current usable capacity using the device's charge-counter telemetry during calibration.
 
-The calibration process measures the battery during a controlled charging cycle and uses the collected data to determine actual capacity.
+The resulting capacity can be used for:
 
-Once calibrated, the result is stored and used for:
-
-- Actual Capacity
-- Battery Health
+- Actual battery capacity
+- Battery health calculation
 - Battery analytics
 
 ---
 
 ### 🧪 Battery Calibration
 
-Calibration can be started when:
+Calibration is designed to begin when:
 
 - Battery level is **15% or below**
 - The device is connected to power
 
-Calibration measures the battery's usable capacity while charging.
+S Charge measures the change in charge-counter value over the charging range to estimate the battery's usable capacity.
 
-The process can continue until:
+A calibration session may produce a provisional capacity estimate after a sufficient charging span, and a later full-charge completion can refine the result.
 
-- 100%, or
-- An appropriate early-completion threshold is reached once sufficient capacity has been measured.
-
-If charging is interrupted by a disconnected or faulty cable, calibration is **paused rather than cancelled**.
-
-When the charger is connected again, S Charge can resume the existing calibration instead of restarting from the beginning.
+**Important:** a calibration interruption/disruption is not a clean continuous measurement. The calibration state is handled so that an interrupted session does not leave an invalid stale baseline to be reused incorrectly.
 
 ---
 
 ### ⚡ Smart Charge
 
-Smart Charge is an **optional root-only feature**. It allows supported rooted devices to automatically control charging at user-defined thresholds.
+Smart Charge is an **optional root-only feature** for supported devices.
 
-Smart Charge uses supported Linux/sysfs charging-control interfaces and therefore requires:
+It can control charging around user-defined thresholds using compatible Linux/sysfs charging-control interfaces.
+
+Smart Charge requires:
 
 - Root/Superuser access
 - A compatible kernel
-- A writable charging-control node
+- A supported writable charging-control interface
 
-Smart Charge is **not required** for the normal battery monitoring, analytics, health, capacity, or calibration features.
+Smart Charge is **not required** for normal monitoring, analytics, battery health, capacity information, calibration, or notifications.
 
 ---
 
 ### 📊 Battery Analytics
 
-Interactive real-time graphs provide visual information for:
+S Charge provides live graphical information for measurements such as:
 
 - Voltage
 - Current
 - Battery power
 
 These graphs help visualize battery behavior during charging and discharging.
+
+---
+
+### 🔔 Charging Notifications
+
+S Charge can maintain charging monitoring and notifications in the background.
+
+Charging events can be received through the system power-connection receiver, allowing charging monitoring to start without first opening the main S Charge interface.
+
+Notification behavior can depend on Android background-execution restrictions and device-specific battery-management policies.
 
 ---
 
@@ -101,6 +111,7 @@ S Charge is **not a root-only application**.
 | Feature | Rooted | Unrooted |
 |---|:---:|:---:|
 | Battery monitoring | ✅ | ✅ |
+| Battery percentage / precise telemetry | ✅ | ✅ |
 | Voltage/current/power | ✅ | ✅ |
 | Temperature | ✅ | ✅ |
 | Battery health | ✅ | ✅ |
@@ -112,7 +123,7 @@ S Charge is **not a root-only application**.
 | Smart Charge | ✅ | ❌ |
 | Kernel charging control | ✅ | ❌ |
 
-Actual availability of individual battery statistics depends on what the device's Android battery driver exposes.
+Actual availability of individual battery statistics depends on the device and its battery driver.
 
 ---
 
@@ -122,45 +133,49 @@ Actual availability of individual battery statistics depends on what the device'
 
 **Only required for Smart Charge.**
 
-S Charge uses root privileges to access supported Linux sysfs charging-control nodes and control charging on compatible devices.
+S Charge uses root access to interact with supported Linux/sysfs charging-control interfaces on compatible devices.
 
-When Smart Charge is enabled, your root manager may request Superuser permission.
-
-Compatible root solutions may include:
+Possible root environments include solutions such as:
 
 - Magisk
 - KernelSU
 - APatch
 
-Root is **not required** for normal battery monitoring, calibration, capacity measurement, or battery health.
+Root is **not required** for normal monitoring, calibration, capacity analysis, or battery health features.
 
 ---
 
-### 2. Background / Battery Usage
+### 2. Notifications
 
-S Charge needs reliable background execution while charging so that charging monitoring, calibration, and notifications are not stopped by aggressive battery optimization.
+S Charge requests notification access so charging-monitoring information can be shown while the app is running in the background.
 
-On supported Android versions, S Charge can request exemption from battery optimization.
-
-The app does **not** require unrestricted background processing continuously; normal monitoring is intended to operate while charging.
+On supported Android versions, notification permission may need to be granted by the user.
 
 ---
 
-### 3. Boot Completed
+### 3. Background / Battery Optimization
 
-S Charge can use the boot-completed event to restore appropriate charging-monitoring behavior after the device starts.
+S Charge requests exemption from battery optimization on supported Android versions so charging monitoring, calibration, and notifications can continue reliably while the app is not open.
 
-Normal monitoring remains dependent on the device's actual charging state.
+Device manufacturers may apply additional background-management rules.
+
+---
+
+### 4. Boot Completed
+
+S Charge can receive the device boot-completed event to restore appropriate charging-monitoring behavior after startup.
+
+Normal monitoring remains dependent on the device's current charging state.
 
 ---
 
 ## ⚠️ Compatibility
 
-S Charge supports both rooted and unrooted Android devices for its monitoring and battery-analysis features.
+S Charge supports rooted and unrooted Android devices for its battery-monitoring and analysis features.
 
-However, **Smart Charge requires root and compatible kernel charging-control interfaces**.
+Smart Charge requires root and compatible kernel charging-control interfaces.
 
-Charging-control compatibility depends on:
+Compatibility depends on:
 
 - Device
 - Android version
@@ -169,31 +184,29 @@ Charging-control compatibility depends on:
 - Charger driver
 - Available sysfs interfaces
 
-Some devices may not expose certain battery statistics.
-
-For example, battery cycle count may display `N/A` when the device/kernel does not provide a usable lifetime cycle-count value.
-
-S Charge does not invent hardware statistics that are unavailable from the device.
+Some devices may not expose certain hardware statistics. S Charge does not invent unavailable hardware data.
 
 ---
 
 ## 🛠️ Technical Specs
 
 - **Minimum SDK:** Android 8.0 (API 26)
-- **Target SDK:** Android 16 (API 36)
+- **Target SDK:** Android 14 (API 34)
+- **Compile SDK:** Android 14 (API 34)
 - **Architecture:** Universal APK
 - **Package:** `com.hesi.scharge`
 - **Language:** Kotlin
 - **UI Framework:** Jetpack Compose
 - **Root Framework:** libsu
-- **Data Storage:** Android DataStore
+- **Data Storage:** Android DataStore / local preferences
+- **Java/Kotlin target:** Java 17
 - **Internet Required:** ❌ No
 
 ---
 
 ## 🔐 Privacy
 
-S Charge operates entirely on the device.
+S Charge operates locally on the device.
 
 - ❌ No account required
 - ❌ No cloud service required
@@ -201,19 +214,51 @@ S Charge operates entirely on the device.
 - ❌ No personal data collection
 - ❌ No battery data uploaded to external servers
 
-Battery information and application settings remain on the device.
+Battery telemetry and application settings remain on the device.
 
 ---
 
-## 🚀 Installation
+## 🚀 Build
 
-1. Open the **Releases** section of this repository.
-2. Download the latest `S_Charge.apk`.
-3. Install it on your Android device.
-4. Grant notification/background access when requested.
-5. If you want to use **Smart Charge**, grant Superuser permission when requested.
-6. Configure your Smart Charge thresholds if your device supports kernel charging control.
+Open the `SNotes` folder in **Android Studio**.
 
-Root is **not required** to use the normal battery monitoring and calibration features.
+Or build from the command line with JDK 17 and the Android SDK:
+
+```bash
+./gradlew assembleDebug
+```
+
+For a release build:
+
+```bash
+./gradlew assembleRelease
+```
+---
+
+## 🧩 Project Structure
+
+```text
+SCharge/
+├── app/
+│   ├── src/main/java/com/hesi/scharge/
+│   │   ├── core/
+│   │   ├── data/
+│   │   ├── receiver/
+│   │   ├── service/
+│   │   ├── telemetry/
+│   │   └── ui/
+│   └── src/main/res/
+├── gradle/
+├── build.gradle.kts
+├── gradle.properties
+├── gradlew
+├── gradlew.bat
+├── settings.gradle.kts
+└── README.md
+```
 
 ---
+
+## 🌐 S-Suite
+
+S Charge is one application in the **S-Suite** ecosystem.
