@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <group
+        android:scaleX="0.65"
+        android:scaleY="0.65"
+        android:pivotX="54"
+        android:pivotY="54">
+
+        <!-- Battery body -->
+        <path
+            android:strokeColor="#424242"
+            android:strokeWidth="4.5"
+            android:strokeLineJoin="round"
+            android:pathData="M40,30 L68,30 A6,6 0 0 1 74,36 L74,78 A6,6 0 0 1 68,84 L40,84 A6,6 0 0 1 34,78 L34,36 A6,6 0 0 1 40,30 Z" />
+
+        <!-- Battery cap (red accent) -->
+        <path
+            android:fillColor="#E53935"
+            android:pathData="M48,22 L60,22 A3,3 0 0 1 63,25 L63,29 L45,29 L45,25 A3,3 0 0 1 48,22 Z" />
+
+        <!-- Dot-matrix S -->
+        <path
+            android:strokeColor="#FFFFFF"
+            android:strokeWidth="3.3"
+            android:strokeLineCap="round"
+            android:pathData="
+                M50,41 v0.01 M53.5,41 v0.01 M57,41 v0.01 M60.5,41 v0.01
+                M46.5,44.5 v0.01 M50,44.5 v0.01 M53.5,44.5 v0.01 M57,44.5 v0.01 M60.5,44.5 v0.01 M64,44.5 v0.01
+                M43,48 v0.01 M46.5,48 v0.01 M50,48 v0.01
+                M43,51.5 v0.01 M46.5,51.5 v0.01 M50,51.5 v0.01 M53.5,51.5 v0.01
+                M46.5,55 v0.01 M50,55 v0.01 M53.5,55 v0.01 M57,55 v0.01
+                M50,58.5 v0.01 M53.5,58.5 v0.01 M57,58.5 v0.01 M60.5,58.5 v0.01
+                M53.5,62 v0.01 M57,62 v0.01 M60.5,62 v0.01 M64,62 v0.01
+                M57,65.5 v0.01 M60.5,65.5 v0.01 M64,65.5 v0.01
+                M43,69 v0.01 M46.5,69 v0.01 M50,69 v0.01 M53.5,69 v0.01 M57,69 v0.01 M60.5,69 v0.01
+                M46.5,72.5 v0.01 M50,72.5 v0.01 M53.5,72.5 v0.01 M57,72.5 v0.01" />
+
+    </group>
+</vector>
