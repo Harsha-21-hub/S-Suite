@@ -68,6 +68,7 @@ import java.util.Locale
 import kotlin.math.cos
 import kotlin.math.roundToInt
 import kotlin.math.sin
+import androidx.compose.ui.text.font.Font
 
 // ---------------------------------------------------------------- palette
 
@@ -78,7 +79,10 @@ private val DotDim = Color(0xFF333333)
 private val White = Color(0xFFFFFFFF)
 private val Grey = Color(0xFF8A8A8A)
 private val Red = Color(0xFFE53935)
-private val Mono = FontFamily.Monospace
+private val Mono = FontFamily(
+    Font(R.font.space_mono_regular, FontWeight.Normal),
+    Font(R.font.space_mono_bold, FontWeight.Bold)
+)
 
 private fun f3(v: Double): String = String.format(Locale.US, "%.3f", v)
 private fun f2(v: Double): String = String.format(Locale.US, "%.2f", v)
