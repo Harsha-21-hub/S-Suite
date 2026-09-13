@@ -1,0 +1,10 @@
+# S-MediaReconstruct dependencies
+#
+# UI shell (WebView2 on Windows powers the fluid Nothing-styled interface).
+pywebview>=5.0
+# WebView2 (edgechromium) backend for pywebview on Windows.
+pythonnet>=3.0.3
+# Build tool that bundles everything (incl. FFmpeg) into one EXE.
+pyinstaller>=6.6
+#
+# The media engine itself uses only the Python standard library.

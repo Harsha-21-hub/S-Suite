@@ -1,0 +1,23 @@
+﻿# Python
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Virtual environments
+.venv/
+venv/
+
+# Build output
+build/
+dist/
+*.spec
+
+# FFmpeg binaries
+src/ffmpeg/
+**/ffmpeg.exe
+**/ffprobe.exe
+**/ffplay.exe
+
+# Logs / temporary files
+*.log
+*.tmp

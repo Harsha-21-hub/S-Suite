@@ -1,0 +1,35 @@
+S-MediaReconstruct — Third-Party Notices
+========================================
+
+This application bundles or depends on the following third-party components.
+Each remains under its own license; those licenses govern that component.
+
+FFmpeg  (ffmpeg.exe, ffprobe.exe, ffplay.exe)
+    Website: https://ffmpeg.org
+    License: LGPL-2.1+ / GPL-2.1+ depending on the build.
+    The "release-essentials" Windows build (gyan.dev) is bundled unmodified into
+    the packaged EXE for offline media processing. Source is available from the
+    FFmpeg project and the build provider.
+
+pywebview
+    Website: https://pywebview.flowrl.com
+    License: BSD-3-Clause. Provides the native WebView host for the interface.
+
+pythonnet
+    Website: https://pythonnet.github.io
+    License: MIT. Enables the Edge WebView2 backend for pywebview on Windows.
+
+Microsoft Edge WebView2 Runtime
+    Provided by the OS on Windows 10/11 (ships with Edge). Not redistributed here.
+    Governed by the Microsoft Software License Terms.
+
+PyInstaller
+    Website: https://pyinstaller.org
+    License: GPL-2.0 with a bootloader exception permitting distribution of the
+    resulting frozen application under any license.
+
+Nothing / Ndot typography
+    No proprietary Nothing or Ndot font file is included or redistributed. If a
+    licensed .ttf/.otf is placed in src/fonts/ by the user, it is loaded privately
+    at runtime on Windows and is not redistributed. The dot-matrix status display
+    is rendered in original code and depends on no proprietary font.
