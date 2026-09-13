@@ -12,11 +12,105 @@ import sys
 import threading
 from pathlib import Path
 
-from engine.ffmpeg import FFPLAY_EXE, ffmpeg_available
+from engine.ffmpeg import FFPLAY_EXE
 from engine.pipeline import Config, Pipeline
 from engine.util import safe_name
 
+
 RECENTS_MAX = 6
+
+# Startup engine protection.
+# The WebView calls get_defaults() during startup. That call must never wait
+# indefinitely for FFmpeg/FFprobe, otherwise WebView2 can show "Not Responding".
+STARTUP_ENGINE_TIMEOUT = 5.0
+STARTUP_RELAUNCH_ENV = "SMR_STARTUP_ENGINE_RELAUNCHED"
+
+
+def _bundled_engine_paths() -> tuple[Path, Path]:
+    """Resolve the FFmpeg/FFprobe paths from the same bundled bin directory."""
+    bin_dir = FFPLAY_EXE.parent
+    return bin_dir / "ffmpeg.exe", bin_dir / "ffprobe.exe"
+
+
+def _startup_engine_check() -> tuple[bool, str]:
+    """
+    Run a bounded FFmpeg/FFprobe health check.
+
+    The check is deliberately performed here with subprocess timeouts rather
+    than calling an unbounded helper. This prevents the pywebview API call
+    itself from hanging forever during application startup.
+    """
+    ffmpeg_exe, ffprobe_exe = _bundled_engine_paths()
+    creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+
+    for label, exe in (("FFmpeg", ffmpeg_exe), ("FFprobe", ffprobe_exe)):
+        if not exe.is_file():
+            return False, f"{label} was not found: {exe}"
+
+        try:
+            proc = subprocess.run(
+                [str(exe), "-version"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=STARTUP_ENGINE_TIMEOUT,
+                creationflags=creationflags,
+            )
+        except subprocess.TimeoutExpired:
+            return False, (
+                f"{label} startup check timed out after "
+                f"{STARTUP_ENGINE_TIMEOUT:.0f} seconds."
+            )
+        except Exception as exc:
+            return False, f"{label} startup check could not be started: {exc}"
+
+        if proc.returncode != 0:
+            output = (proc.stdout or "").strip()
+            detail = output[-1200:] if output else "No diagnostic output."
+            return False, (
+                f"{label} startup check failed (exit {proc.returncode}).\n"
+                f"{detail}"
+            )
+
+    return True, "FFmpeg and FFprobe are ready."
+
+
+def _relaunch_once_after_engine_failure(error: str) -> bool:
+    """
+    Relaunch the packaged/source application once after a startup engine
+    failure. Returns True when a relaunch was started.
+
+    The environment marker prevents an infinite restart loop.
+    """
+    if os.environ.get(STARTUP_RELAUNCH_ENV) == "1":
+        return False
+
+    try:
+        env = os.environ.copy()
+        env[STARTUP_RELAUNCH_ENV] = "1"
+
+        if getattr(sys, "frozen", False):
+            command = [sys.executable, *sys.argv[1:]]
+            cwd = str(Path(sys.executable).resolve().parent)
+        else:
+            script = Path(sys.argv[0]).resolve()
+            command = [sys.executable, str(script), *sys.argv[1:]]
+            cwd = str(script.parent)
+
+        subprocess.Popen(
+            command,
+            cwd=cwd,
+            env=env,
+            close_fds=True,
+            creationflags=getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0),
+        )
+        return True
+    except Exception:
+        return False
+
+
 
 
 def _config_dir() -> Path:
@@ -88,11 +182,57 @@ class Api:
     def get_defaults(self) -> dict:
         home = Path.home()
         out = home / "Videos"
+
+        # This method is called by the UI while it is showing ENGINE CHECKING.
+        # Never call an unbounded FFmpeg helper here: a hung process would keep
+        # the pywebview bridge request pending and make the whole window appear
+        # "Not Responding".
+        ok, engine_error = _startup_engine_check()
+
+        if not ok:
+            relaunched = _relaunch_once_after_engine_failure(engine_error)
+
+            # When the first check fails, start exactly one clean replacement
+            # process and terminate this broken instance. The replacement gets
+            # the marker above, so it cannot create a restart loop.
+            if relaunched:
+                # Give the new process a moment to initialize before exiting.
+                threading.Timer(0.20, lambda: os._exit(0)).start()
+
+                return {
+                    "outFolder": str(out if out.exists() else home),
+                    "outName": "S-Media-Reconstructed",
+                    "ffmpeg": False,
+                    "platform": os.name,
+                    "engineError": (
+                        "Engine startup check failed. "
+                        "S-MediaReconstruct is relaunching once…"
+                    ),
+                    "engineRelaunching": True,
+                }
+
+            # This is the second failure. Do NOT relaunch again. Return the
+            # actual diagnostic so the UI can surface the real problem.
+            return {
+                "outFolder": str(out if out.exists() else home),
+                "outName": "S-Media-Reconstructed",
+                "ffmpeg": False,
+                "platform": os.name,
+                "engineError": (
+                    "ENGINE CHECK FAILED AFTER AUTOMATIC RELAUNCH\n\n"
+                    + engine_error
+                    + "\n\nNo further automatic relaunch will be attempted."
+                ),
+                "engineRelaunching": False,
+            }
+
         return {
             "outFolder": str(out if out.exists() else home),
             "outName": "S-Media-Reconstructed",
-            "ffmpeg": ffmpeg_available(),
+            "ffmpeg": True,
             "platform": os.name,
+            "engineError": "",
+            "engineRelaunching": False,
         }
 
     # -- input selection ---------------------------------------------------

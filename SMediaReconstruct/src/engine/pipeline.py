@@ -2,14 +2,16 @@
 
 Every major step verifies its output. Two random preflight tests must pass
 before full processing. A final boundary/beep scan must reach zero remaining
-artifacts before the output is accepted. Source files are never deleted;
-cleanup happens only after a verified final output.
+artifacts before the output is accepted. Source files are never deleted.
+All large media intermediates live under <input>\\temp\\<job> so the
+processing workspace stays beside the source media and is removed on
+success, cancellation, or failure.
 """
 from __future__ import annotations
 
 import random
 import shutil
-import tempfile
+import uuid
 import threading
 import time
 from dataclasses import dataclass
@@ -97,6 +99,68 @@ class Pipeline:
         if self.cancel.is_set():
             raise Cancelled("Operation cancelled by user.")
 
+    @staticmethod
+    def _input_roots(cfg: Config) -> list[Path]:
+        roots: list[Path] = []
+        for p in cfg.inputs:
+            p = Path(p)
+            roots.append(p if p.is_dir() else p.parent)
+        return roots
+
+    @classmethod
+    def _temp_roots(cls, cfg: Config) -> list[Path]:
+        return [root / "temp" for root in cls._input_roots(cfg)]
+
+    @staticmethod
+    def _is_within(path: Path, parent: Path) -> bool:
+        try:
+            path.resolve().relative_to(parent.resolve())
+            return True
+        except ValueError:
+            return False
+
+    @classmethod
+    def _filter_processing_workspace(cls, paths: list[Path], cfg: Config) -> list[Path]:
+        """Never treat our input\temp workspace as source media."""
+        temp_roots = cls._temp_roots(cfg)
+        return [p for p in paths
+                if not any(cls._is_within(Path(p), t) for t in temp_roots)]
+
+    @classmethod
+    def _make_workdir(cls, cfg: Config) -> Path:
+        """Create an isolated per-job workspace under the user's input folder(s)."""
+        roots = cls._input_roots(cfg)
+        if not roots:
+            raise RuntimeError("No input folder is available for the processing workspace.")
+
+        root = roots[0].resolve()
+        temp_root = root / "temp"
+        temp_root.mkdir(parents=True, exist_ok=True)
+
+        # Never allow the final output to be placed inside our disposable workspace.
+        output = Path(cfg.output).resolve()
+        if cls._is_within(output, temp_root):
+            raise RuntimeError(
+                "The final output cannot be saved inside the input\\temp workspace. "
+                "Choose the input folder, another folder, or another drive for the output."
+            )
+
+        stamp = time.strftime("%Y%m%d_%H%M%S")
+        for _ in range(10):
+            name = f"job_{stamp}_{uuid.uuid4().hex[:8]}"
+            work = temp_root / name
+            try:
+                work.mkdir(parents=False, exist_ok=False)
+            except FileExistsError:
+                continue
+
+            # Explicit step folders keep the workspace understandable to a user.
+            for name in ("reconstruct", "paired", "batches", "tests", "previews", "final"):
+                (work / name).mkdir()
+            return work
+
+        raise RuntimeError("Could not create a unique processing workspace.")
+
     def _emit_preview_file(self, jp: Path | None):
         if not jp:
             return
@@ -109,7 +173,7 @@ class Pipeline:
             pass
 
     def _preview_from(self, engine: ClipEngine, media: Path, work: Path):
-        out = work / "preview_cell.jpg"
+        out = work / "previews" / "preview_cell.jpg"
         self._emit_preview_file(engine.last_frame_jpeg(media, out))
 
     def _preview_at(self, media: Path, seconds: float, work: Path):
@@ -121,7 +185,7 @@ class Pipeline:
         on a quiet FF so it neither spams the log nor moves the progress bar.
         """
         qff = FF(lambda *_: None, None, self.cancel)
-        out = work / "preview_cell.jpg"
+        out = work / "previews" / "preview_cell.jpg"
         try:
             qff.run(["-y", "-ss", inv_float(max(0.0, seconds)), "-i", str(media),
                      "-frames:v", "1", "-vf", "scale=480:-2", "-q:v", "4", str(out)],
@@ -167,7 +231,7 @@ class Pipeline:
         ff = self._ff("scan")
         self.ff = ff
         ff.ensure()
-        paths = collect(cfg.inputs, cfg.recursive)
+        paths = self._filter_processing_workspace(collect(cfg.inputs, cfg.recursive), cfg)
         self.log(f"Collected {len(paths)} files from input.")
         exos = [p for p in paths if p.suffix.lower() == EXO_EXT]
         info: dict = {"mode": None}
@@ -208,7 +272,7 @@ class Pipeline:
     # -- RUN ---------------------------------------------------------------
     def run(self, cfg: Config):
         self._t0 = time.time()
-        work = Path(tempfile.mkdtemp(prefix="smr_job_"))
+        work = self._make_workdir(cfg)
         log_path = work / "job.log"
 
         def jlog(s):
@@ -242,7 +306,7 @@ class Pipeline:
                 jlog("NOTE: GPU (NVENC) was requested but is unavailable on this "
                      "machine; falling back to CPU (libx264).")
 
-            paths = collect(cfg.inputs, cfg.recursive)
+            paths = self._filter_processing_workspace(collect(cfg.inputs, cfg.recursive), cfg)
             exos = [p for p in paths if p.suffix.lower() == EXO_EXT]
             if exos:
                 self._run_exo(ff, cfg, paths, exos, work)
@@ -265,18 +329,39 @@ class Pipeline:
                        "meta": {"duration": human_seconds(s["duration"]),
                                 "detail": describe(s), "size": s["size"]}})
         except Cancelled:
+            # A cancelled job must not leave the large input\\temp media workspace
+            # behind. Keep the diagnostic text in the UI, then remove the whole
+            # per-job temporary directory.
             self.status("CANCELLED")
-            self.emit({"type": "cancelled", "work": str(work)})
+            log_text = (
+                log_path.read_text(encoding="utf-8", errors="replace")
+                if log_path.exists() else "Operation cancelled by user."
+            )
+            shutil.rmtree(work, ignore_errors=True)
+            self.emit({
+                "type": "cancelled",
+                "work": str(work),
+                "logText": log_text,
+            })
         except Exception as e:
+            # Failed jobs also clean their input\\temp media workspace. The UI gets
+            # the complete diagnostic text before the temporary directory is
+            # removed, so multi-GB intermediates cannot accumulate in %TEMP%.
             self.status("FAILED")
+            log_text = (
+                log_path.read_text(encoding="utf-8", errors="replace")
+                if log_path.exists() else str(e)
+            )
+            work_path = str(work)
+            shutil.rmtree(work, ignore_errors=True)
             self.emit({
                 "type": "error",
                 "stage": getattr(e, "stage", None) or "PROCESSING",
                 "problem": str(e),
-                "work": str(work),
-                "log": str(log_path),
-                "logText": (log_path.read_text(encoding="utf-8", errors="replace")
-                            if log_path.exists() else str(e)),
+                "work": work_path,
+                "log": "",
+                "logText": log_text,
+                "tempCleaned": True,
             })
 
     # -- EXO path ----------------------------------------------------------
@@ -305,7 +390,7 @@ class Pipeline:
             self._progress(done / total * 100.0 if total else 0.0,
                            cur=done, total=total, stage="exo")
 
-        video, audio = engine.reconstruct(scan, work, on_progress=recon_prog)
+        video, audio = engine.reconstruct(scan, work / "reconstruct", on_progress=recon_prog)
         self._check()
         vs = stream_summary(ff, video)
         as_ = stream_summary(ff, audio)
@@ -419,7 +504,8 @@ class Pipeline:
         segs = self._random_regions(dur)
         for idx, (start, length) in enumerate(segs, 1):
             self._check()
-            d = Path(tempfile.mkdtemp(prefix=f"smr_t{idx}_"))
+            d = work / "tests" / f"test_{idx}"
+            d.mkdir(parents=False, exist_ok=False)
             try:
                 o = d / "av.mkv"
                 if combined:
@@ -508,7 +594,7 @@ class Pipeline:
         # Master concat (lossless copy of batches)
         self.step("master", "MASTER CONCAT")
         self._band(72, 6)
-        master = work / "master.mkv"
+        master = work / "final" / "master.mkv"
         engine.concat_masters(batches, master)
         self._preview_from(engine, master, work)
         self.step("master", "MASTER CONCAT", "done")
@@ -526,7 +612,7 @@ class Pipeline:
             protect = self._flagged_clip_indices(items, result["flagged"])
             rbatches = engine.build_batches(items, work, cfg, normalize=True,
                                             protect_indices=protect, preview=lambda seg: None)
-            master2 = work / "master_repaired.mkv"
+            master2 = work / "final" / "master_repaired.mkv"
             engine.concat_masters(rbatches, master2)
             result2 = beep.scan_boundaries(ff, master2, boundaries, self.log,
                                            on_progress=lambda p: self._progress(60 + p * 0.4, stage="beep"))
@@ -564,7 +650,7 @@ class Pipeline:
         for idx, s0 in enumerate(starts, 1):
             self._check()
             chunk = items[s0:s0 + span]
-            out = work / f"clip_test_{idx}.mkv"
+            out = work / "tests" / f"clip_test_{idx}.mkv"
             engine.filter_concat(chunk, out, cfg)
             verify_has_av(engine.ff, out, require_audio=True)
             self.log(f"TEST {idx}: PASS  clips {s0 + 1}-{s0 + span}")
