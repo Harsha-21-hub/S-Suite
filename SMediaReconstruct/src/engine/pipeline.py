@@ -23,6 +23,11 @@ from .batching import BATCH_SIZE, ClipEngine, batch_count
 from .detection import (EXO_EXT, MediaFile, collect, compatible, pair_separate,
                         probe_media)
 from .exo import ExoEngine, scan_exo
+from .exo_detector import (find_cache_index, map_playlist_to_exo,
+                           parse_hls_media_playlist, scan_exo_inventory)
+from .exo_converter import (ReconResult, build_ts_segments, concat_segments,
+                            describe_signature, resolve_order,
+                            video_representations, video_sig_from_stream)
 from .ffmpeg import FF
 from .hardware import resolve_encoder
 from .util import human_seconds, human_size, inv_float, numeric_sort_key
@@ -61,6 +66,13 @@ class Pipeline:
         self._span = 100.0
         self.last_preview: Path | None = None
         self._stage_name = ""
+        # ETA smoothing: track a moving average of overall-progress rate so the
+        # estimate reflects the current phase's speed instead of assuming the
+        # whole job progresses at the average-since-start rate.
+        self._eta_last_t: float | None = None
+        self._eta_last_overall: float = 0.0
+        self._eta_rate: float | None = None   # %-overall per second (smoothed)
+        self._eta_shown: float | None = None
 
     # -- helpers -----------------------------------------------------------
     def log(self, line: str):
@@ -80,8 +92,7 @@ class Pipeline:
     def _progress(self, pct: float, speed: float | None = None, cur=None, total=None, stage=""):
         overall = self._base + self._span * (max(0.0, min(100.0, pct)) / 100.0)
         elapsed = time.time() - self._t0
-        frac = max(0.001, overall / 100.0)
-        eta = elapsed / frac - elapsed if overall > 0 else None
+        eta = self._estimate_eta(overall, elapsed)
         self.emit({"type": "progress", "stage": stage,
                    "stageName": getattr(self, "_stage_name", ""),
                    "pct": round(overall, 1),
@@ -89,6 +100,37 @@ class Pipeline:
                    "speed": (f"{speed:.1f}x" if speed else None),
                    "elapsed": int(elapsed), "eta": (int(eta) if eta and eta > 0 else None),
                    "cur": cur, "total": total})
+
+    def _estimate_eta(self, overall: float, elapsed: float) -> float | None:
+        """Rate-based ETA smoothed with an EMA, so it tracks the current phase
+        rather than the average-since-start (which swung wildly when a fast
+        phase was followed by a slow one). Falls back to the simple estimate
+        until a rate is established, and rate-limits how fast the shown value
+        can change so it counts down smoothly."""
+        now = time.time()
+        if overall <= 0:
+            self._eta_last_t, self._eta_last_overall = now, overall
+            return None
+        if self._eta_last_t is not None:
+            dt = now - self._eta_last_t
+            dp = overall - self._eta_last_overall
+            if dt > 0.05 and dp > 0:
+                inst = dp / dt                      # %-overall per second
+                self._eta_rate = (inst if self._eta_rate is None
+                                  else 0.2 * inst + 0.8 * self._eta_rate)
+        self._eta_last_t, self._eta_last_overall = now, overall
+
+        if self._eta_rate and self._eta_rate > 1e-6:
+            raw = (100.0 - overall) / self._eta_rate
+        else:
+            raw = elapsed / (overall / 100.0) - elapsed   # fallback
+        raw = max(0.0, raw)
+        # Smooth the displayed value so it doesn't jump around.
+        if self._eta_shown is None:
+            self._eta_shown = raw
+        else:
+            self._eta_shown = 0.3 * raw + 0.7 * self._eta_shown
+        return self._eta_shown
 
     def _ff(self, stage: str):
         def prog(pct, speed):
@@ -236,20 +278,28 @@ class Pipeline:
         exos = [p for p in paths if p.suffix.lower() == EXO_EXT]
         info: dict = {"mode": None}
         if exos:
-            root = cfg.inputs[0] if cfg.inputs and cfg.inputs[0].is_dir() else exos[0].parent
-            scan = scan_exo(root, self.log)
+            inv = scan_exo_inventory(exos, self.log)
+            if inv.media_count == 0:
+                raise RuntimeError(
+                    "The .exo cache contains no playable media objects — only "
+                    "playlists / subtitles / unknown files were found. Nothing to reconstruct.")
+            pl = inv.best_media_playlist()
+            pinfo = parse_hls_media_playlist(pl) if pl else None
             info = {
-                "mode": "EXO",
-                "exo_files": len(scan.files),
-                "video_fragments": len(scan.video_fragments),
-                "audio_fragments": len(scan.audio_fragments),
-                "video_track": scan.video_track_id,
-                "audio_track": scan.audio_track_id,
-                "manifest": bool(scan.manifest),
+                "mode": "EXO-TS" if inv.ts_media else "EXO",
+                "exo_files": inv.total,
+                "ts_media": len(inv.ts_media),
+                "fmp4_media": len(inv.fmp4_media),
+                "playlists": len(inv.hls_master) + len(inv.hls_media),
+                "subtitles": len(inv.webvtt),
+                "unknown": len(inv.unknown),
+                "playlist_segments": (pinfo or {}).get("segment_count"),
+                "batches": batch_count(inv.media_count),
             }
-            if len(scan.video_fragments) != len(scan.audio_fragments):
-                info["warning"] = (f"Fragment count mismatch: {len(scan.video_fragments)} video "
-                                   f"vs {len(scan.audio_fragments)} audio. Source may be incomplete.")
+            if inv.ts_media and inv.fmp4_media:
+                info["warning"] = ("Both MPEG-TS and fragmented-MP4 media are present. "
+                                   "Reconstruction will select the single coherent "
+                                   "rendition and report if they differ.")
         else:
             media = probe_media(ff, paths, self.log)
             if media["mixed"]:
@@ -309,7 +359,8 @@ class Pipeline:
             paths = self._filter_processing_workspace(collect(cfg.inputs, cfg.recursive), cfg)
             exos = [p for p in paths if p.suffix.lower() == EXO_EXT]
             if exos:
-                self._run_exo(ff, cfg, paths, exos, work)
+                inv = scan_exo_inventory(exos, self.log)
+                self._run_exo_cache(ff, cfg, inv, paths, exos, work)
             else:
                 self._run_clips(ff, cfg, paths, work)
 
@@ -364,59 +415,346 @@ class Pipeline:
                 "tempCleaned": True,
             })
 
-    # -- EXO path ----------------------------------------------------------
-    def _run_exo(self, ff, cfg, paths, exos, work):
-        self.status("BUILDING")
-        self.step("exo", "EXO RECONSTRUCTION")
-        self._band(0, 45)
-        root = cfg.inputs[0] if cfg.inputs and cfg.inputs[0].is_dir() else exos[0].parent
-        scan = scan_exo(root, self.log)
-        self.emit({"type": "detect", "info": {
-            "mode": "EXO", "exo_files": len(scan.files),
-            "video_fragments": len(scan.video_fragments),
-            "audio_fragments": len(scan.audio_fragments),
-            "video_track": scan.video_track_id, "audio_track": scan.audio_track_id}})
+    # -- Unified EXO reconstruction (format-agnostic front end) -----------
+    def _run_exo_cache(self, ff, cfg, inv, paths, exos, work):
+        """Format-agnostic entry point. Classifies each object (done), probes a
+        common MediaSegment model, groups by real rendition signature, selects
+        ONE coherent rendition, then routes it through the common adapter
+        interface (`_reconstruct_representation`) — MPEG-TS and fMP4 each return
+        the same ReconResult — and finally through the ONE shared finalize
+        stage. A normalized media abstraction, not mandatory per-segment MP4s:
+        each adapter uses the lossless continuous assembly correct for its
+        container to keep audio gapless."""
+        if inv.media_count == 0:
+            raise RuntimeError(
+                "The .exo cache contains no playable media objects — only "
+                "playlists / subtitles / unknown files were found. Nothing to reconstruct.")
 
-        # Preflight: the continuous streams are ~ the sum of the fragment bytes.
+        root = cfg.inputs[0] if cfg.inputs and cfg.inputs[0].is_dir() else exos[0].parent
+        pl = inv.best_media_playlist()
+        pinfo = parse_hls_media_playlist(pl) if pl else None
+
+        self.status("BUILDING")
+        self.step("exo", "EXO INGESTION / MODEL")
+        self._band(0, 25)
+
+        # 1) Probe every MPEG-TS object into the segment model (hard-fail on any
+        #    unreadable required object). fMP4 media are represented by their
+        #    init signature (their fragments are not independently decodable, so
+        #    the proven continuous engine reconstructs them).
+        ts_segments = build_ts_segments(ff, inv.ts_media, self.log) if inv.ts_media else []
+        ts_video_groups = video_representations(ts_segments)
+
+        fmp4_sig = None
+        fmp4_scan = None
+        if inv.fmp4_media:
+            try:
+                fmp4_scan = scan_exo(root, self.log)
+                vinfo = ff.probe(fmp4_scan.video_init)
+                vstream = next((s for s in vinfo.get("streams", [])
+                                if s.get("codec_type") == "video"), None)
+                acodec = None
+                try:
+                    ainfo = ff.probe(fmp4_scan.audio_init)
+                    astream = next((s for s in ainfo.get("streams", [])
+                                    if s.get("codec_type") == "audio"), None)
+                    acodec = (astream or {}).get("codec_name")
+                except Exception:
+                    acodec = None
+                if vstream:
+                    fmp4_sig = video_sig_from_stream(vstream, acodec)
+            except Exception as e:
+                raise RuntimeError(
+                    f"Fragmented-MP4 media is present but could not be read to "
+                    f"determine its rendition:\n  reason: {e}")
+
+        # 2) Build representations keyed by a FULL rendition signature
+        #    (video codec, width, height, fps, audio codec). Same signature ⇒
+        #    same logical rendition; different signatures ⇒ genuinely different
+        #    renditions (e.g. adaptive bitrates), never mixed together.
+        reps: list[dict] = []
+        for sig, segs in ts_video_groups.items():
+            reps.append({"source": "MPEG-TS", "sig": sig,
+                         "count": len(segs), "payload": segs})
+        if fmp4_sig is not None:
+            reps.append({"source": "fMP4", "sig": fmp4_sig,
+                         "count": len(inv.fmp4_media), "payload": fmp4_scan})
+        audio_only_ts = [s for s in ts_segments if s.media_type == "audio_only"]
+
+        if not reps:
+            if audio_only_ts:
+                raise RuntimeError(
+                    "This cache contains only audio segments (no video track). "
+                    "A combined A/V movie cannot be reconstructed from it.")
+            raise RuntimeError("No usable video media was found in the cache.")
+
+        # 3) Select ONE coherent logical rendition (property + manifest based).
+        rep = self._resolve_representation(reps, pinfo)
+        self.emit({"type": "detect", "info": {
+            "mode": "EXO-TS" if rep["source"] == "MPEG-TS" else "EXO-fMP4",
+            "exo_files": inv.total,
+            "ts_media": len(inv.ts_media), "fmp4_media": len(inv.fmp4_media),
+            "playlists": len(inv.hls_master) + len(inv.hls_media),
+            "subtitles": len(inv.webvtt), "unknown": len(inv.unknown),
+            "playlist_segments": (pinfo or {}).get("segment_count"),
+            "representation": describe_signature(rep["sig"], rep["source"], rep["count"])}})
+        self.step("exo", "EXO INGESTION / MODEL", "done")
+
+        # 4) COMMON adapter interface. Every format returns the SAME ReconResult
+        #    contract; the format-specific internals (continuous TS assembly /
+        #    ExoEngine fMP4 reconstruction) live behind it.
+        result = self._reconstruct_representation(
+            ff, rep, pinfo, root, inv, audio_only_ts, work)
+
+        # 5) ONE common finalize stage for EVERY EXO format.
+        self._finalize_continuous(ff, cfg, result, work)
+
+    # -- representation resolution ----------------------------------------
+    def _resolve_representation(self, reps, pinfo):
+        """Select ONE coherent logical rendition from real media properties and
+        manifest evidence. It never asks the user to delete a format and never
+        picks 'highest resolution' blindly:
+
+        * One signature → coherent. If it exists in several packagings (TS +
+          fMP4), auto-select one source.
+        * Multiple signatures (genuinely different renditions, e.g. adaptive
+          bitrates of one asset) → prefer the rendition the HLS playlist
+          corroborates; only if none is corroborated fall back to the
+          highest-quality one, logging the basis and every alternative.
+        `reps` entries are dicts: {source, sig, count, payload}."""
+        by_sig: dict = {}
+        for e in reps:
+            by_sig.setdefault(e["sig"], []).append(e)
+
+        if len(by_sig) == 1:
+            entries = next(iter(by_sig.values()))
+        else:
+            plc = (pinfo or {}).get("segment_count")
+            corr = {e["sig"] for elist in by_sig.values() for e in elist
+                    if plc and e["source"] == "MPEG-TS" and e["count"] == plc}
+            if len(corr) == 1:
+                sig = next(iter(corr))
+                basis = "HLS-playlist corroboration"
+            else:
+                def quality(s):
+                    return ((s[1] or 0) * (s[2] or 0), s[3] or 0)   # (area, fps)
+                sig = max(by_sig, key=quality)
+                basis = "highest-quality rendition (no single playlist-corroborated one)"
+            entries = by_sig[sig]
+            self.log(f"Multiple renditions detected; selected by {basis}:")
+            self.log("  selected: " + describe_signature(
+                entries[0]["sig"], entries[0]["source"], entries[0]["count"]))
+            for s, elist in by_sig.items():
+                if s != sig:
+                    for e in elist:
+                        self.log("  not used: " + describe_signature(
+                            e["sig"], e["source"], e["count"]))
+
+        if len(entries) == 1:
+            return entries[0]
+
+        # Same rendition, multiple packagings (TS + fMP4) → pick one source.
+        ts_e = next((e for e in entries if e["source"] == "MPEG-TS"), None)
+        fmp4_e = next((e for e in entries if e["source"] == "fMP4"), None)
+        if ts_e and pinfo and pinfo.get("segment_count") == ts_e["count"]:
+            chosen, why = ts_e, "MPEG-TS segment count matches the HLS playlist (verifiably complete)"
+        elif fmp4_e:
+            chosen, why = fmp4_e, "fragmented-MP4 continuous packaging"
+        else:
+            chosen, why = entries[0], "first available source"
+        self.log(f"The same rendition is present in multiple packagings "
+                 f"({', '.join(e['source'] for e in entries)}); automatically "
+                 f"selected {chosen['source']} — {why}. Source files are untouched.")
+        return chosen
+
+    # -- common adapter interface -----------------------------------------
+    def _reconstruct_representation(self, ff, rep, pinfo, root, inv,
+                                    audio_only_ts, work) -> ReconResult:
+        """The single interface both formats implement. Dispatches to the
+        format-specific adapter, each of which returns the shared ReconResult
+        (video, audio, duration, boundaries, metadata)."""
+        if rep["source"] == "MPEG-TS":
+            return self._adapt_ts(ff, rep, pinfo, root, inv, audio_only_ts, work)
+        if rep["source"] == "fMP4":
+            return self._adapt_fmp4(ff, rep["payload"], work)
+        raise RuntimeError(f"Unsupported representation source: {rep['source']}")
+
+    def _adapt_ts(self, ff, rep, pinfo, root, inv, audio_only_ts, work) -> ReconResult:
+        """MPEG-TS adapter: order the normalized MediaSegments, then assemble a
+        continuous lossless transport stream (the internal optimization that
+        keeps audio gapless) and return the common ReconResult contract."""
+        video_bearing = rep["payload"]
+        types = {s.media_type for s in video_bearing}
+        cache_index = find_cache_index(root)
+        mapping = map_playlist_to_exo(pinfo, inv.ts_media, cache_index, self.log)
+        # A combined A/V representation already contains its own audio. Any
+        # separate audio-only EXOs belong to another layout/rendition unless
+        # explicitly selected, so they must never be appended to the video list.
+        if types == {"combined_av"}:
+            ordered = resolve_order(video_bearing, pinfo, mapping, self.log)
+            return self._ts_continuous(ff, ordered, ordered, pinfo, work)
+
+        if types == {"video_only"}:
+            selected_audio_codec = rep["sig"][4] if len(rep["sig"]) >= 5 else None
+            if selected_audio_codec is None:
+                raise RuntimeError(
+                    "The selected video-only MPEG-TS rendition does not declare an "
+                    "audio codec, so automatic audio pairing would be unsafe.")
+
+            matching_audio = [
+                s for s in audio_only_ts
+                if s.audio_codec == selected_audio_codec
+            ]
+            if not matching_audio:
+                found = sorted({s.audio_codec or "unknown" for s in audio_only_ts})
+                raise RuntimeError(
+                    "The selected MPEG-TS video rendition has no matching "
+                    f"audio-only stream. Expected audio codec: {selected_audio_codec}; "
+                    f"found: {', '.join(found) if found else 'none'}. "
+                    "Reconstruction stopped rather than mix incompatible audio.")
+
+            # A separate audio stream is usable only when it forms exactly one
+            # segment-for-segment timeline for the selected video rendition.
+            # Never merge extra/duplicate audio objects merely because their codec
+            # matches; that could create an invalid or duplicated soundtrack.
+            if len(matching_audio) != len(video_bearing):
+                raise RuntimeError(
+                    "Separate MPEG-TS video/audio segment counts do not match for "
+                    f"the selected rendition ({len(video_bearing)} video vs "
+                    f"{len(matching_audio)} matching audio). Refusing to guess which "
+                    "audio objects belong to the movie.")
+
+            v = resolve_order(video_bearing, pinfo, mapping, self.log)
+            a = resolve_order(matching_audio, None, None, self.log)
+
+            # The separate streams must cover approximately the same timeline.
+            if v and a and v[0].timeline_pos() is not None and a[0].timeline_pos() is not None:
+                start_delta = abs(v[0].timeline_pos() - a[0].timeline_pos())
+                if start_delta > 1.0:
+                    raise RuntimeError(
+                        "Separate MPEG-TS video/audio timelines do not align: "
+                        f"start offset is {start_delta:.3f}s.")
+            if v and a:
+                for i, (vs, aa) in enumerate(zip(v, a)):
+                    vd = vs.duration or 0.0
+                    ad = aa.duration or 0.0
+                    if vd and ad and abs(vd - ad) > 0.75:
+                        raise RuntimeError(
+                            "Separate MPEG-TS video/audio segment durations do not "
+                            f"match at segment #{i + 1} ({vd:.3f}s vs {ad:.3f}s).")
+
+            return self._ts_continuous(ff, v, a, pinfo, work)
+
+        raise RuntimeError(
+            "The selected MPEG-TS rendition has an unsupported or mixed media layout: "
+            f"{sorted(types)}. Refusing to mix combined, video-only, and audio-only "
+            "segments because that could produce a broken movie.")
+
+    def _ts_continuous(self, ff, v_segments, a_segments, pinfo, work) -> ReconResult:
+        """MPEG-TS internal assembly (behind the common adapter).
+
+        Concatenate the ordered segment bytes into one continuous transport
+        stream (gapless: no per-segment MP4/AAC decoder restarts), verify it,
+        and return the shared ReconResult. `v_segments is a_segments` ⇒ combined
+        A/V in one file; otherwise separate video/audio renditions."""
+        combined = v_segments is a_segments
+        rec = work / "reconstruct"
+        srcs = [s.source for s in v_segments] + ([] if combined else [s.source for s in a_segments])
+        self._preflight_space(work, self._sum_sizes(srcs), "reconstruction workspace")
+
+        self.status("BUILDING")
+        self.step("exo2", "CONTINUOUS RECONSTRUCTION (MPEG-TS)")
+        self._band(0, 45)
+
+        def cat_prog(done, total):
+            self._progress((done / total * 100.0) if total else 0.0,
+                           cur=done, total=total, stage="exo2")
+
+        if combined:
+            av = concat_segments(v_segments, rec / "continuous_av.ts", self.log, on_progress=cat_prog)
+            video = audio = av
+        else:
+            video = concat_segments(v_segments, rec / "continuous_video.ts", self.log, on_progress=cat_prog)
+            audio = concat_segments(a_segments, rec / "continuous_audio.ts", self.log, on_progress=cat_prog)
+        self._check()
+
+        vsum = stream_summary(ff, video)
+        asum = stream_summary(ff, audio)
+        if not vsum.get("video"):
+            raise RuntimeError("Continuous reconstruction produced no video stream.")
+        if not asum.get("audio"):
+            raise RuntimeError("Continuous reconstruction produced no audio stream.")
+        vd = vsum["duration"] or 0.0
+        ad = asum["duration"] or 0.0
+        dur = min(vd, ad) if (vd and ad) else (vd or ad)
+        self.log(f"Continuous video {human_seconds(vd)} | continuous audio {human_seconds(ad)}")
+        if pinfo and pinfo.get("total_duration") and dur > 0:
+            exp = pinfo["total_duration"]
+            if abs(dur - exp) > max(2.0, 0.02 * exp):
+                self.log(f"NOTE: reconstructed duration {human_seconds(dur)} differs "
+                         f"from HLS playlist total {human_seconds(exp)}.")
+        self.step("exo2", "CONTINUOUS RECONSTRUCTION (MPEG-TS)", "done")
+        self._progress(100.0)
+        self._preview_at(video, max(1.0, dur * 0.02), work)
+        boundaries = self._ts_boundaries(a_segments if not combined else v_segments, dur)
+        return ReconResult(video=video, audio=audio, duration=dur, boundaries=boundaries,
+                           metadata={"source": "MPEG-TS", "combined": combined,
+                                     "segments": len(v_segments)})
+
+    def _adapt_fmp4(self, ff, scan, work) -> ReconResult:
+        """fMP4 adapter. The proven ExoEngine remains the specialized
+        fragmented-MP4 parser/reconstructor; its continuous output is returned
+        through the SAME ReconResult contract as the TS adapter, so both share
+        one finalize stage (no bypass)."""
+        self.status("BUILDING")
+        self.step("exo2", "CONTINUOUS RECONSTRUCTION (fMP4)")
+        self._band(0, 45)
         frag_bytes = self._sum_sizes([p for _, p in scan.video_fragments]
                                      + [p for _, p in scan.audio_fragments]
                                      + [scan.video_init, scan.audio_init])
         self._preflight_space(work, frag_bytes, "reconstruction workspace")
 
-        engine = ExoEngine(ff, self.log)
-        nfrag = len(scan.video_fragments) + len(scan.audio_fragments)
-
         def recon_prog(done, total):
             self._progress(done / total * 100.0 if total else 0.0,
-                           cur=done, total=total, stage="exo")
+                           cur=done, total=total, stage="exo2")
 
-        video, audio = engine.reconstruct(scan, work / "reconstruct", on_progress=recon_prog)
+        video, audio = ExoEngine(ff, self.log).reconstruct(
+            scan, work / "reconstruct", on_progress=recon_prog)
         self._check()
         vs = stream_summary(ff, video)
         as_ = stream_summary(ff, audio)
         vd, ad = vs["duration"], as_["duration"]
         self.log(f"Continuous video {human_seconds(vd)} | continuous audio {human_seconds(ad)}")
-        self.step("exo", "EXO RECONSTRUCTION", "done")
+        self.step("exo2", "CONTINUOUS RECONSTRUCTION (fMP4)", "done")
         self._progress(100.0)
-        # Auto-preview: show a frame from the reconstructed video immediately.
         self._preview_at(video, max(1.0, min(vd, ad) * 0.02), work)
+        dur = min(vd, ad)
+        boundaries = self._exo_boundaries(scan, ad)
+        return ReconResult(video=video, audio=audio, duration=dur, boundaries=boundaries,
+                           metadata={"source": "fMP4",
+                                     "combined": video == audio,
+                                     "fragments": len(scan.video_fragments)})
 
-        # Two random preflight tests on the continuous streams
+    def _finalize_continuous(self, ff, cfg, result: ReconResult, work):
+        """The ONE common finalize stage shared by EVERY EXO format. Consumes
+        the ReconResult contract (video, audio, duration, boundaries): two
+        random preflight tests → single remux (COPY FIRST) or re-encode
+        (NORMALIZE ALL) → audio-integrity check → boundary/beep scan. Being
+        MPEG-TS at source never forces re-encoding: COPY FIRST stream-copies the
+        original H.264/AAC."""
+        video, audio, dur, boundaries = (result.video, result.audio,
+                                         result.duration, result.boundaries)
         self.status("TESTING")
         self.step("tests", "TWO RANDOM PREFLIGHT TESTS")
-        self._band(45, 10)
-        self._exo_tests(ff, video, audio, min(vd, ad), work)
+        self._band(45, 8)
+        self._exo_tests(ff, video, audio, dur, work)
         self.step("tests", "TWO RANDOM PREFLIGHT TESTS", "done")
 
-        # Output-drive preflight before writing the final movie.
-        out_est = self._sum_sizes(list({video, audio}))  # copy ≈ source; normalize ≈ same order
+        out_est = self._sum_sizes(list({video, audio}))
         self._preflight_space(cfg.output.parent, out_est, "final output")
-
-        # Final output (copy-first = remux; normalize-all = GPU/CPU re-encode)
         self.status("BUILDING")
         self.step("mux", "FINAL OUTPUT")
-        self._band(55, 30)
-        dur = min(vd, ad)
+        self._band(53, 34)
         last_prev = [time.time()]
 
         def mux_prog(pct, speed):
@@ -426,20 +764,15 @@ class Pipeline:
                 last_prev[0] = now
                 self._preview_at(video, dur * max(0.0, min(1.0, pct / 100.0)), work)
 
-        ffm = FF(self.log, mux_prog, self.cancel)
-        ExoEngine(ffm, self.log).mux(video, audio, cfg.output, cfg, duration=dur)
+        ExoEngine(FF(self.log, mux_prog, self.cancel), self.log).mux(
+            video, audio, cfg.output, cfg, duration=dur)
         self._progress(100.0)
         self._preview_at(video, dur * 0.98, work)
 
-        # Hard audio-integrity check: the merged output MUST carry an audio
-        # stream of comparable length. This guarantees the app can never
-        # silently produce a video-only (muted) file.
         osum = stream_summary(ff, cfg.output)
         if not osum.get("audio"):
             raise RuntimeError(
-                "Merged output has video but NO audio stream. Audio reconstruction "
-                "or muxing failed — output rejected. Check the diagnostic log for the "
-                "audio init / audio-fragment counts.")
+                "Merged output has video but NO audio stream. Output rejected.")
         adur = float((osum.get("audio") or {}).get("duration") or 0) or osum.get("duration", 0)
         if osum.get("duration", 0) > 0 and adur < 0.5 * osum["duration"]:
             raise RuntimeError(
@@ -448,11 +781,9 @@ class Pipeline:
         self.log(f"Audio-integrity OK · {describe(osum)}")
         self.step("mux", "FINAL OUTPUT", "done")
 
-        # Beep verification: computed fragment boundaries + random regions
         self.status("VERIFYING")
         self.step("beep", "BOUNDARY / BEEP SCAN")
-        self._band(85, 10)
-        boundaries = self._exo_boundaries(scan, ad)
+        self._band(87, 10)
         result = beep.scan_boundaries(ff, cfg.output, boundaries, self.log,
                                       on_progress=lambda p: self._progress(p, stage="beep"))
         self.emit({"type": "beep", "scanned": result["scanned"], "clean": result["clean"],
@@ -460,11 +791,26 @@ class Pipeline:
                    "remaining": result["suspicious"]})
         if result["suspicious"] > 0:
             raise RuntimeError(
-                f"Boundary scan found {result['suspicious']} suspicious seam(s) in the "
-                "continuous stream. This should not happen on a clean EXO source; the "
-                "cache is likely incomplete. Output was not accepted.")
-        self.log("Boundary scan clean. Continuous-AAC path avoids per-fragment decoder restarts.")
+                f"Boundary scan found {result['suspicious']} suspicious seam(s). "
+                "The cache may be incomplete. Output was not accepted.")
+        self.log("Boundary scan clean. Continuous-stream path avoids per-segment "
+                 "decoder restarts.")
         self.step("beep", "BOUNDARY / BEEP SCAN", "done")
+
+    def _ts_boundaries(self, segments, dur: float) -> list[float]:
+        """Segment-seam times from cumulative durations, sampled + random regions."""
+        pts, acc = [], 0.0
+        for s in segments[:-1]:
+            acc += (s.duration or 0.0)
+            if 0.2 < acc < dur - 0.2:
+                pts.append(round(acc, 3))
+        pts = sorted(set(pts))
+        if len(pts) > 120:
+            stepn = len(pts) / 120.0
+            pts = [pts[int(i * stepn)] for i in range(120)]
+        for _ in range(8):
+            pts.append(round(random.uniform(0.2, max(0.3, dur - 0.2)), 3))
+        return sorted(set(pts))
 
     @staticmethod
     def _sum_sizes(paths) -> int:
