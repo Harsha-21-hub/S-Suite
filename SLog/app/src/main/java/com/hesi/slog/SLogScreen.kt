@@ -662,7 +662,9 @@ fun SLogScreen(
                             MutableTransitionState(!fresh).apply { targetState = true }
                         }
                         LaunchedEffect(removing) { appear.targetState = !removing }
-                        AnimatedVisibility(
+                        // full name: inside the list item the outer Column's ColumnScope version
+                        // can't be used (Compose scope rule), so call the plain one
+                        androidx.compose.animation.AnimatedVisibility(
                             visibleState = appear,
                             enter = expandVertically(tween(280, easing = FastOutSlowInEasing)) + fadeIn(tween(280)),
                             exit = shrinkVertically(tween(260, easing = FastOutSlowInEasing)) + fadeOut(tween(200))

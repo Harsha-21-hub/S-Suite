@@ -23,6 +23,11 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.core.content.IntentCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
 
@@ -48,6 +53,17 @@ class MainActivity : ComponentActivity() {
 
         // Opened with a .slog / .csv file ("Open with S Log" or shared to S Log)
         if (savedInstanceState == null) handleIncomingFile(intent)
+
+        // Account deleted on another device (or on the web)? Check when the app comes to the front
+        // and every 2 minutes while it's open -> back to the login screen.
+        lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                while (true) {
+                    authViewModel.recheckAccount()
+                    delay(120_000)
+                }
+            }
+        }
 
         setContent {
             // primary/onPrimary set so buttons are red with WHITE text (default was purple text)

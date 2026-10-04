@@ -3,6 +3,7 @@ package com.hesi.slog
 import com.google.firebase.FirebaseApp
 import com.google.firebase.auth.EmailAuthProvider
 import com.google.firebase.auth.FirebaseAuth
+import com.google.firebase.auth.FirebaseAuthInvalidUserException
 import com.google.firebase.auth.FirebaseUser
 import com.google.firebase.auth.UserProfileChangeRequest
 import com.google.firebase.firestore.FieldValue
@@ -146,6 +147,24 @@ object FirebaseRepo {
     fun signOut() = auth.signOut()
 
     /**
+     * Asks the auth server whether the signed-in account still exists. Deleted on another device
+     * (or in the Firebase console) or disabled -> signs out, so the login screen comes back, and
+     * returns false. Offline / other errors -> true (checked again later).
+     */
+    suspend fun checkAccount(): Boolean {
+        val user = currentUser ?: return false
+        return try {
+            user.reload().await()
+            true
+        } catch (e: FirebaseAuthInvalidUserException) {
+            auth.signOut()
+            false
+        } catch (e: Exception) {
+            true
+        }
+    }
+
+    /**
      * Deletes the account for good: my logs (and their ticks), leaves logs shared with me,
      * removes my users/{uid} entry and the login itself. Needs the password again (Firebase rule).
      */
@@ -157,6 +176,7 @@ object FirebaseRepo {
         db.waitForPendingWrites().await() // make sure the deletes reach the server before the login goes
         users().document(user.uid).delete().await()
         user.delete().await()
+        auth.signOut() // make sure the login screen comes back
     }
 
     // ------------------------------------------------------------- Listeners
@@ -294,9 +314,16 @@ object FirebaseRepo {
     }
 
     /** The user's own entry (users/{uid}): saved best whole-day streak + celebrated milestone. */
-    fun listenProfile(uid: String, onChange: (bestDayStreak: Int, celebratedDay: Int?) -> Unit): ListenerRegistration =
+    /** [onGone]: my user entry vanished on the server or can't be read (account deleted elsewhere?). */
+    fun listenProfile(
+        uid: String,
+        onGone: () -> Unit = {},
+        onChange: (bestDayStreak: Int, celebratedDay: Int?) -> Unit
+    ): ListenerRegistration =
         users().document(uid).addSnapshotListener { snap, error ->
-            if (error != null || snap == null) return@addSnapshotListener
+            if (error != null) { onGone(); return@addSnapshotListener }
+            if (snap == null) return@addSnapshotListener
+            if (!snap.exists() && !snap.metadata.isFromCache) { onGone(); return@addSnapshotListener }
             onChange(
                 (snap.get("bestDayStreak") as? Number)?.toInt() ?: 0,
                 (snap.get("celebratedDay") as? Number)?.toInt()

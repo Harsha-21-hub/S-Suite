@@ -140,7 +140,10 @@ class SLogViewModel(application: Application) : AndroidViewModel(application) {
         this.email = email
         windowStart = computeWindowStart(_currentMonth.value)
 
-        profileRegistration = FirebaseRepo.listenProfile(uid) { best, celebrated ->
+        // user entry gone: account deleted on another device? -> checkAccount signs out (login screen)
+        profileRegistration = FirebaseRepo.listenProfile(uid, onGone = {
+            viewModelScope.launch { FirebaseRepo.checkAccount() }
+        }) { best, celebrated ->
             celebratedDay = celebrated
             _storedDayBest.value = best
         }

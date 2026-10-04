@@ -244,7 +244,8 @@ function startMain(user) {
     S.celebratedDay = celebrated;
     S.storedDayBest = best;
     renderMain();
-  });
+  }, () => api.checkAccount()); // user entry gone: account deleted elsewhere? -> login screen
+  api.checkAccount();
   S.unsubLogs = api.listenLogs(user.email, (logs) => {
     S.logs = logs.sort((a, b) => orderOf(a) - orderOf(b) || a.createdAt - b.createdAt);
     syncRecordListeners();
@@ -270,7 +271,7 @@ function setMonth(y, m) {
 // ------------------------------------------------------------------ stats
 function computeStats() {
   // Every day is judged with the logs and times that existed THAT day (planFor), so adding a
-  // log or a time never changes earlier days. Half-done days don't count.
+  // log or a time never changes earlier days. Partly done days (any tick) count.
   const uid = S.user.uid;
   const todayKey = ymd(today());
   const prefix = `${S.month.y}-${pad(S.month.m + 1)}`;
@@ -911,7 +912,8 @@ function openDeleteAccount() {
         err.textContent = "Deleting...";
         try {
           await api.deleteAccount(f.pw.value);
-          closeModal(); // auth change takes you back to the login screen
+          // back to the login screen (the auth change does this too)
+          stopListeners(); S.user = null; closeModal(); renderAuth();
         } catch (x) {
           err.textContent = friendlyError(x);
           btn.disabled = false;
@@ -1075,6 +1077,7 @@ function renderChecking() {
 async function checkRegistration(user) {
   if (S.user && S.user.uid === user.uid && S.unsubLogs) return; // already in
   renderChecking();
+  if (!(await api.checkAccount())) return; // deleted account: signed out -> login screen
   const ok = await api.isRegistered(user.email);
   if (ok) startMain(user);
   else { stopListeners(); S.user = null; renderPin(user); }
@@ -1198,4 +1201,10 @@ if (!api.configured) {
     }
     else if (!S.signingUp) checkRegistration({ uid: a.uid, email: a.email, name: a.name });
   });
+  // An account deleted on another device keeps this tab signed in until it asks the server, so
+  // check when the tab comes back into view and every 2 minutes: deleted -> login screen.
+  const recheck = () => { if (S.user && document.visibilityState === "visible") api.checkAccount(); };
+  document.addEventListener("visibilitychange", recheck);
+  window.addEventListener("focus", recheck);
+  setInterval(recheck, 120000);
 }

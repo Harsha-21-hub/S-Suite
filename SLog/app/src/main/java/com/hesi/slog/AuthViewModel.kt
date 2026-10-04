@@ -69,6 +69,8 @@ class AuthViewModel : ViewModel() {
         _state.value = AuthState.Checking
         checkJob?.cancel()
         checkJob = viewModelScope.launch {
+            // deleted on another device -> signed out here; the auth listener shows the login screen
+            if (!FirebaseRepo.checkAccount()) return@launch
             val registered = FirebaseRepo.isRegistered(user)
             if (FirebaseRepo.currentUser?.uid != user.uid) return@launch
             _state.value = if (registered) {
@@ -76,6 +78,19 @@ class AuthViewModel : ViewModel() {
             } else {
                 AuthState.NeedsPin(email)
             }
+        }
+    }
+
+    /**
+     * An account deleted on another device stays signed in here until the app asks the server.
+     * Called when the app comes to the front and every 2 minutes while open: deleted -> login screen.
+     */
+    fun recheckAccount() {
+        if (!FirebaseRepo.isReady) return
+        val s = _state.value
+        if (s !is AuthState.SignedIn && s !is AuthState.NeedsPin) return
+        viewModelScope.launch {
+            if (!FirebaseRepo.checkAccount()) refresh()
         }
     }
 

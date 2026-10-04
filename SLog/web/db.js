@@ -8,7 +8,7 @@ import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/fireba
 import {
   getAuth, onAuthStateChanged, signInWithEmailAndPassword, createUserWithEmailAndPassword,
   updateProfile, sendPasswordResetEmail, signOut as fbSignOut, deleteUser,
-  EmailAuthProvider, reauthenticateWithCredential
+  EmailAuthProvider, reauthenticateWithCredential, reload
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import {
   initializeFirestore, persistentLocalCache, persistentMultipleTabManager,
@@ -94,6 +94,28 @@ export async function isRegistered(email) {
 }
 export const resetPassword = (email) => sendPasswordResetEmail(auth, email.trim());
 export const signOut = () => fbSignOut(auth);
+
+// Codes the auth server gives for an account that no longer exists (deleted on another device
+// or in the Firebase console) or was disabled.
+const GONE = new Set(["auth/user-not-found", "auth/user-token-expired", "auth/user-disabled", "auth/invalid-user-token"]);
+/**
+ * Asks the auth server whether the signed-in account still exists. Deleted / disabled -> signs out
+ * (the auth listener then shows the login screen) and returns false. Offline -> true (try later).
+ */
+export async function checkAccount() {
+  const u = auth && auth.currentUser;
+  if (!u) return false;
+  try {
+    await reload(u);
+    return true;
+  } catch (e) {
+    if (e && GONE.has(e.code)) {
+      try { await fbSignOut(auth); } catch {}
+      return false;
+    }
+    return true;
+  }
+}
 export const currentUserName = () => (auth.currentUser ? nameOf(auth.currentUser) : "");
 export const currentAuth = () => {
   const u = auth.currentUser;
@@ -248,12 +270,16 @@ export function saveDayBest(best) {
     .catch(() => {});
 }
 
-/** My user entry -> saved best whole-day streak + highest celebrated milestone (null = never). */
-export function listenProfile(uid, cb) {
+/**
+ * My user entry -> saved best whole-day streak + highest celebrated milestone (null = never).
+ * onGone: the entry vanished on the server or can't be read (account deleted elsewhere?).
+ */
+export function listenProfile(uid, cb, onGone = () => {}) {
   return onSnapshot(doc(db, "users", uid), (snap) => {
+    if (!snap.exists() && !snap.metadata.fromCache) { onGone(); return; }
     const x = snap.exists() ? snap.data() : {};
     cb(x.bestDayStreak || 0, typeof x.celebratedDay === "number" ? x.celebratedDay : null);
-  }, () => {});
+  }, () => onGone());
 }
 
 /** Deletes the account for good: my logs + ticks, leaves shared logs, my user entry, the login. */
@@ -267,6 +293,8 @@ export async function deleteAccount(password) {
   await waitForPendingWrites(db);
   await deleteDoc(doc(db, "users", u.uid));
   await deleteUser(u);
+  // deleteUser signs out by itself; make sure, so the login screen always comes back
+  try { await fbSignOut(auth); } catch {}
 }
 
 export const addMember = (logId, email) =>
