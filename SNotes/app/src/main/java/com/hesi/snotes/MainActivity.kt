@@ -76,6 +76,8 @@ class MainActivity : AppCompatActivity(), DrawingView.Listener {
     private lateinit var shapeGrid: LinearLayout
     private lateinit var shapeScroll: ScrollView
     private lateinit var txtShapesTitle: TextView
+    private lateinit var txtDetectTitle: TextView
+    private lateinit var btnShapeDetect: TextView
     private lateinit var txtShapeVal: TextView
     private lateinit var seekShape: SeekBar
     private lateinit var selectionBar: LinearLayout
@@ -100,6 +102,7 @@ class MainActivity : AppCompatActivity(), DrawingView.Listener {
     private lateinit var btnReset: ImageButton
     private lateinit var btnRotatePdf: ImageButton
     private lateinit var btnTheme: ImageButton
+    private lateinit var btnStats: ImageButton
     private lateinit var btnShare: ImageButton
     private lateinit var btnHide: ImageButton
     private lateinit var btnShow: ImageButton
@@ -126,6 +129,10 @@ class MainActivity : AppCompatActivity(), DrawingView.Listener {
     private var pendingTextY = 0f
     private var objectEditBefore: DocumentState? = null
     private var imageReplaceBefore: DocumentState? = null
+
+    /** strokeVersion of the last stroke save: unchanged notes aren't re-written. */
+    private var savedStrokeVersion = -1L
+    private lateinit var stats: PerfStats
 
     private val handler = Handler(Looper.getMainLooper())
     private val showRunnable = Runnable { if (!focusHidden) setBarsVisible(true) }
@@ -173,6 +180,8 @@ class MainActivity : AppCompatActivity(), DrawingView.Listener {
         shapeGrid = findViewById(R.id.shapeGrid)
         shapeScroll = findViewById(R.id.shapeScroll)
         txtShapesTitle = findViewById(R.id.txtShapesTitle)
+        txtDetectTitle = findViewById(R.id.txtDetectTitle)
+        btnShapeDetect = findViewById(R.id.btnShapeDetect)
         txtShapeVal = findViewById(R.id.txtShapeVal)
         seekShape = findViewById(R.id.seekShape)
         selectionBar = findViewById(R.id.selectionBar)
@@ -194,6 +203,7 @@ class MainActivity : AppCompatActivity(), DrawingView.Listener {
         btnReset = findViewById(R.id.btnReset)
         btnRotatePdf = findViewById(R.id.btnRotatePdf)
         btnTheme = findViewById(R.id.btnTheme)
+        btnStats = findViewById(R.id.btnStats)
         btnShare = findViewById(R.id.btnShare)
         btnHide = findViewById(R.id.btnHide)
         btnShow = findViewById(R.id.btnShow)
@@ -211,6 +221,21 @@ class MainActivity : AppCompatActivity(), DrawingView.Listener {
 
         drawing.listener = this
         drawing.onObjectsChanged = { scheduleSave() }
+        drawing.onShapeSnapped = { label -> showLabel(label) }
+        // detector ON: a picked shape was drawn -> back to automatic
+        drawing.onShapeModeChanged = { tintShapePills(); tintTools() }
+        // PDF notebook got a new empty page: store the sheet layout right away
+        drawing.onPdfPagesChanged = { slots ->
+            if (loaded) {
+                PdfNotebook.saveSlots(this, noteId, slots)
+                scheduleSave()
+                showLabel("Page ${slots.size} added")
+            }
+        }
+        stats = PerfStats(this, root, { drawing.strokes.size }) {
+            prefs.edit().putBoolean("stats_visible", false).apply()
+            tintTools()
+        }
 
         // ---- Restore state ----
         dark = prefs.getBoolean("dark", false)
@@ -222,6 +247,8 @@ class MainActivity : AppCompatActivity(), DrawingView.Listener {
         runCatching {
             drawing.shapeKind = Shapes.Kind.valueOf(prefs.getString("shape_kind", "RECT")!!)
         }
+        drawing.shapeDetect = prefs.getBoolean("shape_detect", false)
+        drawing.shapeFreehand = true
         prefs.getString("recent_colors", "")!!.split(",")
             .mapNotNull { it.toIntOrNull() }
             .forEach { recentColors.add(it) }
@@ -252,6 +279,7 @@ class MainActivity : AppCompatActivity(), DrawingView.Listener {
                 }
                 drawing.setObjects(objs.first, objs.second)
                 if (dark) drawing.setDarkTheme(true)
+                savedStrokeVersion = drawing.strokeVersion   // just loaded = already on disk
                 drawing.restoreViewport(
                     prefs.getFloat("view_${noteId}_pan_x", Float.NaN),
                     prefs.getFloat("view_${noteId}_pan_y", Float.NaN),
@@ -271,6 +299,7 @@ class MainActivity : AppCompatActivity(), DrawingView.Listener {
         selectTool(DrawingView.Tool.PEN, silent = true)
         onHistory(canUndo = false, canRedo = false)
         Fonts.apply(root)
+        if (prefs.getBoolean("stats_visible", false)) { stats.show(); stats.setDark(dark) }
     }
 
     override fun onPause() {
@@ -278,9 +307,28 @@ class MainActivity : AppCompatActivity(), DrawingView.Listener {
         handler.removeCallbacks(autosave)
         saveNote()
         saveViewport()
+        if (::stats.isInitialized && stats.visible) stats.hide().also { statsWasOn = true }
+    }
+
+    private var statsWasOn = false
+
+    override fun onTrimMemory(level: Int) {
+        super.onTrimMemory(level)
+        if (!::drawing.isInitialized) return
+        @Suppress("DEPRECATION")
+        when {
+            level >= TRIM_MEMORY_BACKGROUND -> drawing.trimMemory(all = true)
+            level >= TRIM_MEMORY_RUNNING_LOW -> drawing.trimMemory(all = false)
+        }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        if (statsWasOn) { statsWasOn = false; stats.show(); stats.setDark(dark) }
     }
 
     override fun onDestroy() {
+        if (::stats.isInitialized) stats.release()
         if (::drawing.isInitialized) drawing.releasePdf()
         handler.removeCallbacks(autosave)
         handler.removeCallbacks(showRunnable)
@@ -308,7 +356,14 @@ class MainActivity : AppCompatActivity(), DrawingView.Listener {
 
     private fun saveNote() {
         if (!loaded) return   // never overwrite the note before it has loaded (D5)
-        NoteStore.saveAsync(this, noteId, drawing.page, lightFormStrokes())
+        // Strokes are only re-written when they actually changed (pausing the
+        // app, toggling a tool etc. used to re-encode the whole note each time).
+        // Notes are stored theme-independent: in dark mode black/white ink is
+        // swapped while writing, without copying any stroke.
+        if (drawing.strokeVersion != savedStrokeVersion) {
+            savedStrokeVersion = drawing.strokeVersion
+            NoteStore.saveAsync(this, noteId, drawing.page, drawing.strokes, flipBW = dark)
+        }
         NoteStore.saveObjects(this, noteId, drawing.textObjects, drawing.imageObjects)
         prefs.edit()
             .putFloat("pen_w", drawing.penWidth)
@@ -316,20 +371,11 @@ class MainActivity : AppCompatActivity(), DrawingView.Listener {
             .putFloat("laser_w", drawing.laserWidth)
             .putBoolean("stylus_only", drawing.stylusOnly)
             .putString("shape_kind", drawing.shapeKind.name)
+            .putBoolean("shape_detect", drawing.shapeDetect)
             .putString("recent_colors", recentColors.joinToString(","))
             .apply()
     }
 
-    /** Notes are stored theme-independent (black ink on white). */
-    private fun lightFormStrokes(): List<Stroke> {
-        if (!dark) return drawing.strokes
-        return drawing.strokes.map { s ->
-            if (!s.eraser && (s.color == Color.WHITE || s.color == Color.BLACK)) {
-                val flipped = if (s.color == Color.WHITE) Color.BLACK else Color.WHITE
-                Stroke(s.points, flipped, s.width, s.eraser, s.straight, s.pressures)
-            } else s
-        }
-    }
 
 
     // =====================================================================
@@ -379,6 +425,27 @@ class MainActivity : AppCompatActivity(), DrawingView.Listener {
         }
 
         btnShare.setOnClickListener { showShareDialog() }
+
+        btnStats.setOnClickListener {
+            portraitOverflow?.visibility = View.GONE
+            val on = stats.toggle()
+            stats.setDark(dark)
+            prefs.edit().putBoolean("stats_visible", on).apply()
+            tintTools()
+        }
+
+        btnShapeDetect.setOnClickListener {
+            drawing.shapeDetect = !drawing.shapeDetect
+            drawing.shapeFreehand = true   // ON always starts automatic
+            prefs.edit().putBoolean("shape_detect", drawing.shapeDetect).apply()
+            if (drawing.shapeDetect) selectTool(DrawingView.Tool.SHAPE, silent = true)
+            tintShapePills()
+            tintTools()
+            showLabel(
+                if (drawing.shapeDetect) "Shape detector ON  ·  draw a shape freehand"
+                else "Shape detector OFF  ·  pick a shape and drag"
+            )
+        }
 
         btnHide.setOnClickListener {
             focusHidden = true
@@ -576,6 +643,13 @@ class MainActivity : AppCompatActivity(), DrawingView.Listener {
     private val shapeItems = ArrayList<LinearLayout>()
     private val shapePreviewViews = ArrayList<ImageView>()
 
+    /**
+     * The shape grid (the same in both detector states).
+     *   Detector OFF: tap a shape, then drag to draw it (as many as you like).
+     *   Detector ON : drawing is automatic (freehand -> snapped). Tapping a
+     *                 shape draws THAT shape once by dragging; right after it
+     *                 is drawn the tool goes back to automatic detection.
+     */
     private fun buildShapePills() {
         shapeGrid.removeAllViews()
         shapeItems.clear()
@@ -620,10 +694,16 @@ class MainActivity : AppCompatActivity(), DrawingView.Listener {
 
             item.setOnClickListener {
                 drawing.shapeKind = k
+                if (drawing.shapeDetect) {
+                    // one shape by dragging, then automatic detection again
+                    drawing.shapeFreehand = false
+                    showLabel("Shape: ${Shapes.label(k)}  ·  drag to draw, then back to auto")
+                } else {
+                    showLabel("Shape: ${Shapes.label(k)}")
+                }
                 selectTool(DrawingView.Tool.SHAPE, silent = true)
                 tintShapePills()
                 tintTools()
-                showLabel("Shape: ${Shapes.label(k)}")
             }
             shapeItems.add(item)
             shapePreviewViews.add(icon)
@@ -657,11 +737,28 @@ class MainActivity : AppCompatActivity(), DrawingView.Listener {
     }
 
     private fun tintShapePills() {
+        val detect = drawing.shapeDetect
+        val auto = detect && drawing.shapeFreehand
+        val shapeTool = drawing.tool == DrawingView.Tool.SHAPE
         for ((i, item) in shapeItems.withIndex()) {
-            val on = drawing.tool == DrawingView.Tool.SHAPE && Shapes.ALL[i] == drawing.shapeKind
+            // highlighted only while that shape is the one being dragged
+            val on = shapeTool && !auto && Shapes.ALL[i] == drawing.shapeKind
             item.setBackgroundColor(if (on) 0x33D71921 else Color.TRANSPARENT)
             (item.getChildAt(1) as? TextView)?.setTextColor(if (on) DrawingView.RED else fg())
         }
+        if (!::btnShapeDetect.isInitialized) return
+        val d = resources.displayMetrics.density
+        btnShapeDetect.text = getString(if (detect) R.string.on else R.string.off)
+        btnShapeDetect.setTextColor(if (detect) Color.WHITE else fg())
+        btnShapeDetect.background = GradientDrawable().apply {
+            cornerRadius = 20f * d
+            if (detect) setColor(DrawingView.RED)
+            else {
+                setColor(Color.TRANSPARENT)
+                setStroke((1.5f * d).toInt(), if (dark) 0xFF5A5A5A.toInt() else 0xFFB0B0B0.toInt())
+            }
+        }
+        txtShapesTitle.setText(if (detect) R.string.draw_detect_shape else R.string.draw_exact_shape)
     }
 
     // =====================================================================
@@ -680,7 +777,9 @@ class MainActivity : AppCompatActivity(), DrawingView.Listener {
             DrawingView.Tool.STROKE_ERASER -> "Stroke Eraser"
             DrawingView.Tool.LASER -> "Laser Pointer"
             DrawingView.Tool.SELECT -> "Select Tool"
-            DrawingView.Tool.SHAPE -> "Shape: ${Shapes.label(drawing.shapeKind)}"
+            DrawingView.Tool.SHAPE ->
+                if (drawing.shapeDetect && drawing.shapeFreehand) "Shape detector  ·  draw a shape"
+                else "Shape: ${Shapes.label(drawing.shapeKind)}"
             DrawingView.Tool.TEXT -> "Text Tool"
         }
         showLabel(label)
@@ -960,7 +1059,9 @@ class MainActivity : AppCompatActivity(), DrawingView.Listener {
         txtEraserVal.setTextColor(f)
         txtLaserVal.setTextColor(f)
         txtShapesTitle.setTextColor(f)
+        txtDetectTitle.setTextColor(f)
         txtShapeVal.setTextColor(f)
+        if (::stats.isInitialized) stats.setDark(dark)
         btnShow.setColorFilter(DrawingView.RED)
         btnShow.setBackgroundColor(b)
         for (btn in arrayOf(btnBack, btnUndo, btnRedo, btnReset, btnRotatePdf, btnTheme, btnShare, btnHide)) {
@@ -984,6 +1085,7 @@ class MainActivity : AppCompatActivity(), DrawingView.Listener {
         btnLaser.setColorFilter(if (drawing.tool == DrawingView.Tool.LASER) DrawingView.RED else f)
         btnSelect.setColorFilter(if (drawing.tool == DrawingView.Tool.SELECT) DrawingView.RED else f)
         btnShapes.setColorFilter(if (drawing.tool == DrawingView.Tool.SHAPE) DrawingView.RED else f)
+        btnStats.setColorFilter(if (::stats.isInitialized && stats.visible) DrawingView.RED else f)
         btnStylus.setColorFilter(if (drawing.stylusOnly) DrawingView.RED else f)
         btnPresets.setColorFilter(f)
         btnClear.setColorFilter(f)

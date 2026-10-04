@@ -196,9 +196,9 @@ object HesiNotebook {
             put("width", s.width.toDouble())
             put("eraser", s.eraser)
             put("straight", s.straight)
-            put("points", JSONArray().apply { s.points.forEach { put(it.toDouble()) } })
+            put("points", JSONArray().apply { val p = s.points; for (i in 0 until p.size) put(p[i].toDouble()) })
             if (s.hasPressure()) {
-                put("pressures", JSONArray().apply { s.pressures!!.forEach { put(Math.round(it * 100f) / 100.0) } })
+                put("pressures", JSONArray().apply { val pr = s.pressures!!; for (i in 0 until pr.size) put(Math.round(pr[i] * 100f) / 100.0) })
             }
         })
     }
@@ -207,7 +207,7 @@ object HesiNotebook {
         for (i in 0 until arr.length()) {
             val o = arr.getJSONObject(i)
             val pts = o.getJSONArray("points")
-            val list = ArrayList<Float>(pts.length())
+            val list = FloatList(pts.length())
             for (j in 0 until pts.length()) list.add(pts.getDouble(j).toFloat())
             add(Stroke(
                 list,
@@ -216,7 +216,7 @@ object HesiNotebook {
                 o.optBoolean("eraser", false),
                 o.optBoolean("straight", false),
                 NoteStore.decodePressures(o.optJSONArray("pressures"), list.size / 2)
-            ).also { if (it.hasPressure()) it.seal() else it.rebuild() })
+            ).also { it.seal() })
         }
     }
 

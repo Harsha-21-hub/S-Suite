@@ -30,14 +30,14 @@ object Shapes {
 
     fun label(k: Kind): String = k.name
 
-    fun build(kind: Kind, x0: Float, y0: Float, x1: Float, y1: Float): ArrayList<Float> {
-        val out = ArrayList<Float>(96)
+    fun build(kind: Kind, x0: Float, y0: Float, x1: Float, y1: Float): FloatList {
+        val out = FloatList(96)
         buildInto(kind, x0, y0, x1, y1, out)
         return out
     }
 
     fun buildInto(
-        kind: Kind, x0: Float, y0: Float, x1: Float, y1: Float, out: ArrayList<Float>
+        kind: Kind, x0: Float, y0: Float, x1: Float, y1: Float, out: FloatList
     ) {
         out.clear()
 
@@ -120,12 +120,12 @@ object Shapes {
         }
     }
 
-    private fun push(out: ArrayList<Float>, vararg v: Float) {
+    private fun push(out: FloatList, vararg v: Float) {
         for (f in v) out.add(f)
     }
 
     private fun oval(
-        cx: Float, cy: Float, rx: Float, ry: Float, steps: Int, out: ArrayList<Float>
+        cx: Float, cy: Float, rx: Float, ry: Float, steps: Int, out: FloatList
     ) {
         val sx = rx.coerceAtLeast(1f)
         val sy = ry.coerceAtLeast(1f)
@@ -136,7 +136,7 @@ object Shapes {
         }
     }
 
-    private fun arrow(x0: Float, y0: Float, x1: Float, y1: Float, out: ArrayList<Float>) {
+    private fun arrow(x0: Float, y0: Float, x1: Float, y1: Float, out: FloatList) {
         val dx = x1 - x0
         val dy = y1 - y0
         val len = max(1f, hypot(dx, dy))
@@ -154,7 +154,7 @@ object Shapes {
         )
     }
 
-    private fun arc(x0: Float, y0: Float, x1: Float, y1: Float, out: ArrayList<Float>) {
+    private fun arc(x0: Float, y0: Float, x1: Float, y1: Float, out: FloatList) {
         val cx = (x0 + x1) * 0.5f
         val cy = (y0 + y1) * 0.5f
         val r = max(1f, hypot(x1 - x0, y1 - y0) * 0.5f)
@@ -167,7 +167,7 @@ object Shapes {
     }
 
     /** Upright 5-point star inscribed in the box (radii rx, ry). */
-    private fun star(cx: Float, cy: Float, rx: Float, ry: Float, out: ArrayList<Float>) {
+    private fun star(cx: Float, cy: Float, rx: Float, ry: Float, out: FloatList) {
         val sx = rx.coerceAtLeast(1f)
         val sy = ry.coerceAtLeast(1f)
         for (i in 0..10) {

@@ -19,12 +19,12 @@ sealed class Action {
 }
 
 data class StrokeState(
-    val points: ArrayList<Float>,
+    val points: FloatList,
     val color: Int,
     val width: Float,
     val eraser: Boolean,
     val straight: Boolean,
-    val pressures: ArrayList<Float>?
+    val pressures: FloatList?
 )
 
 data class TextState(

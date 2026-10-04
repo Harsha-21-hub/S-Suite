@@ -2,9 +2,14 @@ package com.hesi.snotes
 
 import android.content.Context
 import android.graphics.RectF
+import android.util.JsonReader
+import android.util.JsonToken
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.BufferedReader
 import java.io.File
+import java.io.FileInputStream
+import java.io.InputStreamReader
 import java.util.concurrent.Executors
 
 /**
@@ -254,58 +259,90 @@ object NoteStore {
     //  Persistence
     // =====================================================================
 
-    private fun encode(page: RectF, strokes: List<Stroke>): String {
-        val root = JSONObject()
-        val pageArr = JSONArray()
-        pageArr.put(page.left.toDouble())
-        pageArr.put(page.top.toDouble())
-        pageArr.put(page.right.toDouble())
-        pageArr.put(page.bottom.toDouble())
-        root.put("page", pageArr)
-
-        val arr = JSONArray()
-        for (s in strokes) {
-            val o = JSONObject()
-            o.put("c", s.color)
-            o.put("w", s.width.toDouble())
-            o.put("e", if (s.eraser) 1 else 0)
-            o.put("s", if (s.straight) 1 else 0)
-            val pts = JSONArray()
-            for (p in s.points) pts.put(p.toDouble())
-            o.put("p", pts)
-            // stylus pressure: per-point width multiplier (2 decimals is plenty)
-            if (s.hasPressure()) {
-                val pr = JSONArray()
-                for (v in s.pressures!!) pr.put(Math.round(v * 100f) / 100.0)
-                o.put("pr", pr)
+    /**
+     * Streams the note straight to disk in the same JSON format as before
+     * ({"page":[..],"strokes":[{"c","w","e","s","p","pr"}]}), so old and new
+     * builds read each other's files.
+     *
+     * Performance: the old encoder built an org.json tree - one boxed Double per
+     * coordinate, a JSONObject per stroke, then one giant String - every time
+     * autosave fired (1.5 s after you lift the pen). On a full page that was
+     * hundreds of milliseconds of CPU and tens of MB of garbage after every
+     * pause, which is the periodic spike / creeping RAM seen while writing.
+     * This writer formats numbers into a reusable char buffer with no
+     * per-point allocation at all.
+     *
+     * [colors] (optional) overrides each stroke's colour, used to store notes
+     * theme-independently without allocating copies of every stroke.
+     */
+    private fun writeNote(f: File, page: RectF, strokes: List<Stroke>, colors: IntArray?) {
+        val tmp = File(f.parentFile, f.name + ".tmp")
+        FastJsonOut(tmp).use { o ->
+            o.raw("{\"page\":[")
+            o.fixed(page.left, 2); o.raw(","); o.fixed(page.top, 2); o.raw(",")
+            o.fixed(page.right, 2); o.raw(","); o.fixed(page.bottom, 2)
+            o.raw("],\"strokes\":[")
+            for ((k, s) in strokes.withIndex()) {
+                if (k > 0) o.raw(",")
+                o.raw("{\"c\":"); o.int(colors?.get(k) ?: s.color)
+                o.raw(",\"w\":"); o.fixed(s.width, 3)
+                o.raw(",\"e\":"); o.int(if (s.eraser) 1 else 0)
+                o.raw(",\"s\":"); o.int(if (s.straight) 1 else 0)
+                o.raw(",\"p\":[")
+                val p = s.points
+                val n = p.size
+                for (i in 0 until n) {
+                    if (i > 0) o.raw(",")
+                    o.fixed(p[i], 2)
+                }
+                o.raw("]")
+                // stylus pressure: per-point width multiplier (2 decimals is plenty)
+                if (s.hasPressure()) {
+                    o.raw(",\"pr\":[")
+                    val pr = s.pressures!!
+                    for (i in 0 until pr.size) {
+                        if (i > 0) o.raw(",")
+                        o.fixed(pr[i], 2)
+                    }
+                    o.raw("]")
+                }
+                o.raw("}")
             }
-            arr.put(o)
+            o.raw("]}")
         }
-        root.put("strokes", arr)
-        return root.toString()
+        if (!tmp.renameTo(f)) {
+            tmp.copyTo(f, overwrite = true)
+            tmp.delete()
+        }
     }
 
     fun save(ctx: Context, id: String, page: RectF, strokes: List<Stroke>) {
-        writeAtomic(dataFile(ctx, id), encode(page, strokes))
+        writeNote(dataFile(ctx, id), page, strokes, null)
     }
 
     /**
-     * Requirement 12 - the pen was freezing mid-stroke because JSON encoding of
-     * every stroke ran on the main thread whenever a debounced autosave fired.
-     * Now the caller thread only takes a cheap snapshot (a shallow copy of the
-     * stroke-list references plus the page rect); the heavy encode AND the write
-     * both run on the low-priority writer thread, so drawing is never blocked.
+     * The caller thread only takes a cheap snapshot (stroke references, their
+     * colours and the page rect); the encode AND the write both run on the
+     * low-priority writer thread, so drawing is never blocked. Sealed strokes
+     * never change length, so reading their point buffers off-thread is safe.
      *
-     * The snapshot protects against the list being structurally changed while we
-     * iterate it. Sealed strokes never have points added/removed, so reading
-     * their point buffers off-thread is safe.
+     * [flipBW] stores black/white ink swapped (notes are saved in light form).
      */
-    fun saveAsync(ctx: Context, id: String, page: RectF, strokes: List<Stroke>) {
+    fun saveAsync(ctx: Context, id: String, page: RectF, strokes: List<Stroke>, flipBW: Boolean = false) {
         val pageCopy = RectF(page)
         val snapshot = ArrayList(strokes)
+        val colors = IntArray(snapshot.size) { i ->
+            val s = snapshot[i]
+            val c = s.color
+            if (flipBW && !s.eraser) when (c) {
+                android.graphics.Color.WHITE -> android.graphics.Color.BLACK
+                android.graphics.Color.BLACK -> android.graphics.Color.WHITE
+                else -> c
+            } else c
+        }
         val target = dataFile(ctx, id)
         io.execute {
-            runCatching { writeAtomic(target, encode(pageCopy, snapshot)) }
+            runCatching { writeNote(target, pageCopy, snapshot, colors) }
         }
     }
 
@@ -325,43 +362,91 @@ object NoteStore {
     fun loadFromTrash(ctx: Context, id: String): Pair<RectF, ArrayList<Stroke>>? =
         loadFrom(trashData(ctx, id))
 
+    /**
+     * Streaming reader (android.util.JsonReader): coordinates go straight into
+     * primitive buffers instead of first building a whole org.json tree of
+     * boxed Doubles, so opening a big note needs a fraction of the memory.
+     */
     private fun loadFrom(f: File): Pair<RectF, ArrayList<Stroke>>? {
         if (!f.exists()) return null
         return runCatching {
-            val root = JSONObject(f.readText())
-            val pa = root.getJSONArray("page")
-            val page = RectF(
-                pa.getDouble(0).toFloat(), pa.getDouble(1).toFloat(),
-                pa.getDouble(2).toFloat(), pa.getDouble(3).toFloat()
-            )
+            val page = RectF(0f, 0f, 2200f, 3000f)
             val strokes = ArrayList<Stroke>()
-            val arr = root.getJSONArray("strokes")
-            for (i in 0 until arr.length()) {
-                val o = arr.getJSONObject(i)
-                val pts = o.getJSONArray("p")
-                val list = ArrayList<Float>(pts.length())
-                for (j in 0 until pts.length()) list.add(pts.getDouble(j).toFloat())
-                val s = Stroke(
-                    list,
-                    o.getInt("c"),
-                    o.getDouble("w").toFloat(),
-                    o.optInt("e", 0) == 1,
-                    o.optInt("s", 0) == 1,
-                    decodePressures(o.optJSONArray("pr"), list.size / 2)
-                )
-                // Pressure strokes are baked into their filled outline here, on
-                // the background thread; plain strokes just need the centre line.
-                if (s.hasPressure()) s.seal() else s.rebuild()
-                strokes.add(s)
+            JsonReader(BufferedReader(InputStreamReader(FileInputStream(f), Charsets.UTF_8), 1 shl 16)).use { r ->
+                r.beginObject()
+                while (r.hasNext()) {
+                    when (r.nextName()) {
+                        "page" -> {
+                            r.beginArray()
+                            val v = FloatArray(4)
+                            var i = 0
+                            while (r.hasNext()) {
+                                val d = r.nextDouble().toFloat()
+                                if (i < 4) v[i] = d
+                                i++
+                            }
+                            r.endArray()
+                            if (i >= 4) page.set(v[0], v[1], v[2], v[3])
+                        }
+                        "strokes" -> {
+                            r.beginArray()
+                            while (r.hasNext()) readStroke(r)?.let { strokes.add(it) }
+                            r.endArray()
+                        }
+                        else -> r.skipValue()
+                    }
+                }
+                r.endObject()
             }
             page to strokes
         }.getOrNull()
     }
 
+    private fun readStroke(r: JsonReader): Stroke? {
+        var color = 0xFF000000.toInt()
+        var width = 5f
+        var eraser = false
+        var straight = false
+        var pts: FloatList? = null
+        var prs: FloatList? = null
+        r.beginObject()
+        while (r.hasNext()) {
+            when (r.nextName()) {
+                "c" -> color = r.nextLong().toInt()
+                "w" -> width = r.nextDouble().toFloat()
+                "e" -> eraser = readFlag(r)
+                "s" -> straight = readFlag(r)
+                "p" -> pts = readFloats(r)
+                "pr" -> prs = readFloats(r)
+                else -> r.skipValue()
+            }
+        }
+        r.endObject()
+        val p = pts ?: return null
+        val pressures = prs?.takeIf { it.size * 2 == p.size && it.size >= 2 }
+        // Pressure strokes are baked into their filled outline here, on the
+        // background thread; plain strokes just need the centre line.
+        return Stroke(p, color, width, eraser, straight, pressures).also { it.seal() }
+    }
+
+    private fun readFlag(r: JsonReader): Boolean = when (r.peek()) {
+        JsonToken.BOOLEAN -> r.nextBoolean()
+        JsonToken.NUMBER -> r.nextInt() != 0
+        else -> { r.skipValue(); false }
+    }
+
+    private fun readFloats(r: JsonReader): FloatList {
+        val out = FloatList(64)
+        r.beginArray()
+        while (r.hasNext()) out.add(r.nextDouble().toFloat())
+        r.endArray()
+        return out
+    }
+
     /** Pressure list for a stroke, or null if absent / not matching the points. */
-    fun decodePressures(arr: JSONArray?, pointCount: Int): ArrayList<Float>? {
+    fun decodePressures(arr: JSONArray?, pointCount: Int): FloatList? {
         if (arr == null || arr.length() != pointCount || pointCount < 2) return null
-        val out = ArrayList<Float>(pointCount)
+        val out = FloatList(pointCount)
         for (i in 0 until arr.length()) out.add(arr.getDouble(i).toFloat())
         return out
     }

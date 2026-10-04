@@ -12,15 +12,16 @@ import android.graphics.PorterDuff
 import android.graphics.PorterDuffXfermode
 import android.graphics.Rect
 import android.graphics.RectF
+import android.graphics.RenderNode
 import android.os.SystemClock
 import android.util.AttributeSet
+import android.view.HapticFeedbackConstants
 import android.view.MotionEvent
 import android.view.View
 import kotlin.math.abs
 import kotlin.math.atan2
 import kotlin.math.ceil
 import kotlin.math.cos
-import kotlin.math.floor
 import kotlin.math.hypot
 import kotlin.math.max
 import kotlin.math.min
@@ -29,14 +30,28 @@ import kotlin.math.sin
 /**
  * The note canvas.
  *
- * Requirement 6 - the redraw path was reworked for battery/CPU:
- *   - strokes are vector data, and each one caches a Path that is now appended
- *     to incrementally instead of being rebuilt on every MOVE event
- *   - onDraw culls against the actual dirty clip, so a moving pen only
- *     rasterises the few hundred pixels around the nib
- *   - drawing invalidates a rectangle, not the whole view
- *   - the laser animates only its own bounds and stops posting frames the
- *     moment it has faded out
+ * Rendering is split in two layers:
+ *
+ *   CONTENT  - page/sheets, PDF pages, text/image objects and every FINISHED
+ *              stroke. Recorded into a RenderNode that is backed by its own
+ *              GPU compositing layer. It is only re-recorded when the document
+ *              or the viewport actually changes (a stroke is committed, undo,
+ *              pan/zoom, theme...). While nothing changes, the GPU simply
+ *              re-uses the cached layer texture.
+ *
+ *   OVERLAY  - the stroke being drawn right now, shape previews, the laser,
+ *              selection handles, scrollbars. Drawn on top every frame.
+ *
+ * Why: with hardware acceleration Android ignores invalidate(rect) and redraws
+ * the whole view, so the old onDraw re-drew EVERY stroke on the page for every
+ * pen movement. CPU/GPU cost per frame grew with each stroke you wrote - the
+ * "usage keeps stacking up while I write" effect. Now a pen frame costs the
+ * same on an empty page and on a full one.
+ *
+ * Other details:
+ *   - strokes are primitive float buffers, appended incrementally
+ *   - long live strokes freeze their older part (see Stroke.CHUNK)
+ *   - the laser stops posting frames the moment it has faded out
  */
 class DrawingView @JvmOverloads constructor(
     context: Context, attrs: AttributeSet? = null
@@ -85,11 +100,37 @@ class DrawingView @JvmOverloads constructor(
     /** Requirement B3: 0 = infinite length, 1 = limited pages, 2 = infinite pages. */
     var pageMode = NoteStore.PAGE_INFINITE
 
-    /** The shape drawn by Tool.SHAPE. Automatic recognition has been removed. */
+    /** The shape drawn by Tool.SHAPE when the detector is off. */
     var shapeKind = Shapes.Kind.RECT
 
     /** Requirement 1: shape stroke width, independent of the pen size. */
     var shapeWidth = 8f
+
+    /**
+     * Shape detector (ShapeRecognizer). When ON:
+     *   - SHAPE tool: automatic - draw any shape freehand; on lift it snaps
+     *     to a perfect line / arrow / circle / ellipse / triangle / rectangle
+     *     / square / polygon / star / arc. Unrecognised drawings stay as ink.
+     *   - Picking a shape in the menu drags that shape ONCE, then the tool
+     *     goes straight back to automatic.
+     *   - PEN tool: "draw and hold" - keep the pen still for a moment at the
+     *     end of a stroke and it snaps into the recognised shape.
+     */
+    var shapeDetect = false
+        set(v) { field = v; if (!v) cancelHold() }
+
+    /**
+     * Detector ON + SHAPE tool: true = automatic (draw freehand, it snaps);
+     * false = the user picked [shapeKind] - it is dragged ONCE, then this
+     * flips back to true by itself (see finishShape).
+     */
+    var shapeFreehand = true
+
+    /** Called when [shapeFreehand] flips back to automatic after a picked shape. */
+    var onShapeModeChanged: (() -> Unit)? = null
+
+    /** Called when the detector converts a drawing (label for the toast). */
+    var onShapeSnapped: ((String) -> Unit)? = null
 
     /**
      * Palm rejection: once a stylus is detected (OnePlus Pad / Samsung Tab S-Pen, ...)
@@ -137,9 +178,45 @@ class DrawingView @JvmOverloads constructor(
     // ---------- Manual shape drag ----------
     private var shapeX0 = 0f
     private var shapeY0 = 0f
-    private val shapePts = ArrayList<Float>(96)
+    private val shapePts = FloatList(96)
     private var shapePreview: Stroke? = null
     private val prevShapeBounds = RectF()
+
+    // ---------- Shape detector ----------
+    /** The live stroke has been snapped into this perfect shape (pen hold). */
+    private var snapped: Stroke? = null
+    private var snappedLabel = ""
+    /** The live stroke was started by the SHAPE tool in detector mode. */
+    private var freehandShape = false
+    private var holdSX = 0f
+    private var holdSY = 0f
+    private val holdSlop = 7f * resources.displayMetrics.density
+    private var holdSince = 0L
+    private val holdRunnable = Runnable { snapHeldStroke() }
+
+    // ---------- Render cache (see class comment) ----------
+    private val contentNode = RenderNode("snotes-content").apply {
+        setUseCompositingLayer(true, null)
+    }
+    @Volatile private var contentDirty = true
+    private var recPanX = Float.NaN
+    private var recPanY = Float.NaN
+    private var recZoom = Float.NaN
+    private var recW = -1
+    private var recH = -1
+
+    /** Selected strokes being moved/scaled are drawn in the overlay instead. */
+    private val lifted = HashSet<Stroke>()
+
+    /** World rectangle currently on screen (set while drawing). */
+    private val viewWorld = RectF()
+
+    /**
+     * Bumped on every change to the stroke list, so the host can skip
+     * re-saving a note that hasn't changed.
+     */
+    var strokeVersion = 0L
+        private set
 
     // ---------- Objects (requirement C4) ----------
     // Rendered UNDER the ink so handwriting always goes on top. Interaction only
@@ -179,6 +256,8 @@ class DrawingView @JvmOverloads constructor(
     private val objHandleLine = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; color = 0xFF3A3A3A.toInt() }
     private val objToolFill = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL; color = 0xF2242424.toInt() }
     private val objToolIcon = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; color = Color.WHITE }
+    private var objDash: DashPathEffect? = null
+    private var objDashZoom = -1f
 
     // ---------- PDF notebook ----------
     // Each PDF page lives on its own fixed canvas sheet (PdfNotebook.Slot). The
@@ -199,6 +278,20 @@ class DrawingView @JvmOverloads constructor(
     /** Notifies the host when objects change so it can autosave them. */
     var onObjectsChanged: (() -> Unit)? = null
 
+    /**
+     * PDF notebook got a new empty page (auto or via the ADD PAGE button):
+     * the host saves the new sheet layout.
+     */
+    var onPdfPagesChanged: ((List<PdfNotebook.Slot>) -> Unit)? = null
+
+    // "+ ADD PAGE" button drawn in the empty space under the last sheet
+    private var addPagePressed = false
+    private val addBtnFill = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
+    private val addBtnLine = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE }
+    private val addBtnText = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.FILL; textAlign = Paint.Align.CENTER
+    }
+
     // ---------- Laser ----------
     // Requirement A1 - GoodNotes-style laser. The COMPLETE current trail stays
     // fully visible while you keep writing. Every new laser point resets the
@@ -215,8 +308,8 @@ class DrawingView @JvmOverloads constructor(
     private var laserLastInput = 0L
 
     private class LaserSegment {
-        val x = ArrayList<Float>(128)
-        val y = ArrayList<Float>(128)
+        val x = FloatList(128)
+        val y = FloatList(128)
         var lastInput = 0L
     }
 
@@ -300,6 +393,7 @@ class DrawingView @JvmOverloads constructor(
         private const val MODE_SHAPE = 11
         private const val MODE_OBJ_DRAG = 12
         private const val MODE_OBJ_XFORM = 13
+        private const val MODE_ADD_PAGE = 14
 
         // object sub-gestures
         private const val OBJ_NONE = 0
@@ -319,6 +413,9 @@ class DrawingView @JvmOverloads constructor(
         private const val LASER_FADE_MS = 260f
         private const val LASER_STAGGER_MS = 150f  // oldest strokes fade first
         private const val LASER_TAIL_FADE_FRACTION = 0.15f
+
+        /** "Draw and hold": how long the pen must rest before snapping. */
+        private const val HOLD_MS = 480L
     }
 
     // =====================================================================
@@ -347,15 +444,14 @@ class DrawingView @JvmOverloads constructor(
                 is Action.Move -> a.strokes.forEach(::swap)
                 is Action.Scale -> a.strokes.forEach(::swap)
                 is Action.Clear -> a.old.forEach(::swap)
-                is Action.Document -> {
-                    a.before.strokes.forEach { st -> swap(Stroke(ArrayList(st.points), st.color, st.width, st.eraser, st.straight, st.pressures?.let { ArrayList(it) })) }
-                    a.after.strokes.forEach { st -> swap(Stroke(ArrayList(st.points), st.color, st.width, st.eraser, st.straight, st.pressures?.let { ArrayList(it) })) }
-                }
+                // object snapshots never carry strokes (see captureState)
+                is Action.Document -> {}
             }
         }
         if (penColor == Color.BLACK) penColor = Color.WHITE
         else if (penColor == Color.WHITE) penColor = Color.BLACK
-        invalidate()
+        strokeVersion++
+        invalidateContent()
     }
 
     fun loadNote(newPage: RectF, newStrokes: List<Stroke>) {
@@ -371,17 +467,28 @@ class DrawingView @JvmOverloads constructor(
             sizedOnce = true
         }
         notifyHistory()
-        invalidate()
+        invalidateContent()
     }
 
     /** Turns this canvas into a PDF notebook: one fixed sheet per PDF page. */
     fun setPdf(slots: List<PdfNotebook.Slot>, file: java.io.File) {
         pdfCache?.close()
         pdfSlots = slots
-        pdfCache = PdfPageCache(file) { postInvalidate() }
+        // A page bitmap finished rendering on the PDF thread: the cached
+        // content layer must be re-recorded to show it.
+        pdfCache = PdfPageCache(file) { contentDirty = true; postInvalidate() }
         page.set(PdfNotebook.bounds(slots))
         if (width > 0) { fitPage(); sizedOnce = true } else sizedOnce = false
-        invalidate()
+        invalidateContent()
+    }
+
+    /** Memory pressure: drop cached PDF page bitmaps and the GPU layer. */
+    fun trimMemory(all: Boolean) {
+        pdfCache?.trim(all)
+        if (all) {
+            contentNode.discardDisplayList()
+            contentDirty = true
+        }
     }
 
     /** Frees the PDF renderer and its page bitmaps (call from onDestroy). */
@@ -420,8 +527,12 @@ class DrawingView @JvmOverloads constructor(
      */
     private fun fitSlot(i: Int) {
         if (width == 0 || height == 0 || pdfSlots.isEmpty()) return
-        val s = pdfSlots[i.coerceIn(0, pdfSlots.size - 1)].sheet
-        val pad = 60f
+        // Fit the PDF + notes panel (not the extra padding around the sheet),
+        // so the page reads at the same size as before; the padding is there
+        // when you scroll or zoom out a little.
+        val slot = pdfSlots[i.coerceIn(0, pdfSlots.size - 1)]
+        val s = slot.content(tmpRect)
+        val pad = 60f + slot.pad * 0.2f
         zoom = min(width / (s.width() + 2 * pad), height / (s.height() + 2 * pad)).coerceIn(MIN_ZOOM, MAX_ZOOM)
         panX = width / 2f - s.centerX() * zoom
         panY = height / 2f - s.centerY() * zoom
@@ -443,6 +554,8 @@ class DrawingView @JvmOverloads constructor(
         clearSelection()
         clearActiveObject()
         current = null
+        snapped = null
+        cancelHold()
         shapePreview = null
         laserSegments.clear()
         activeLaser = null
@@ -453,11 +566,84 @@ class DrawingView @JvmOverloads constructor(
         undoStack.clear()
         redoStack.clear()
         notifyHistory()
+        strokeVersion++
 
         pdfSlots = newSlots
         page.set(PdfNotebook.bounds(newSlots))
         fitSlot(onScreen)
-        invalidate()
+        invalidateContent()
+    }
+
+    /**
+     * Appends an empty canvas page after the last sheet of a PDF notebook.
+     * The new page copies the last sheet's size, so no existing sheet moves
+     * and no ink is touched (undo history stays valid).
+     */
+    fun appendPdfPage(scrollTo: Boolean) {
+        if (!isPdf) return
+        val old = pdfSlots
+        val newSlots = PdfNotebook.withBlankPage(old)
+        if (newSlots.size != old.size + 1) return
+        var moved = false
+        for (i in old.indices) if (old[i].sheet != newSlots[i].sheet) { moved = true; break }
+        if (moved) {
+            // never expected (same-size page at the end) - but keep ink on its page
+            PdfNotebook.remap(old, newSlots.subList(0, old.size), strokes, textObjects, imageObjects)
+            undoStack.clear()
+            redoStack.clear()
+            notifyHistory()
+        }
+        pdfSlots = newSlots
+        page.set(PdfNotebook.bounds(newSlots))
+        strokeVersion++   // the stored page bounds changed
+        if (scrollTo) fitSlot(newSlots.size - 1)
+        invalidateContent()
+        onPdfPagesChanged?.invoke(newSlots)
+    }
+
+    /**
+     * Writing near the bottom of the LAST sheet adds the next empty page
+     * automatically, so there is always room to keep going.
+     */
+    private fun maybeAutoAppendPage(x: Float, y: Float) {
+        if (!isPdf || current?.eraser == true) return
+        val last = pdfSlots.last().sheet
+        if (x < last.left || x > last.right) return
+        val zone = last.height() * 0.12f
+        if (y >= last.bottom - zone && y <= last.bottom + PdfNotebook.GAP) appendPdfPage(scrollTo = false)
+    }
+
+    /** Screen rect of the "+ ADD PAGE" button; false when it isn't on screen. */
+    private fun addPageButton(out: RectF): Boolean {
+        if (!isPdf || width == 0) return false
+        val last = pdfSlots.last().sheet
+        val w = 184f * density
+        val h = 46f * density
+        val cx = last.centerX() * zoom + panX
+        val top = (last.bottom + PdfNotebook.GAP) * zoom + panY + 12f * density
+        out.set(cx - w / 2f, top, cx + w / 2f, top + h)
+        return out.bottom > 0f && out.top < height && out.right > 0f && out.left < width
+    }
+
+    private fun drawAddPageButton(canvas: Canvas, r: RectF) {
+        val rad = r.height() / 2f
+        addBtnFill.color = when {
+            addPagePressed -> 0x33D71921
+            dark -> 0xFF101010.toInt()
+            else -> Color.WHITE
+        }
+        canvas.drawRoundRect(r, rad, rad, addBtnFill)
+        addBtnLine.color = RED
+        addBtnLine.strokeWidth = 1.5f * density
+        canvas.drawRoundRect(r, rad, rad, addBtnLine)
+        addBtnText.color = RED
+        addBtnText.textSize = android.util.TypedValue.applyDimension(
+            android.util.TypedValue.COMPLEX_UNIT_SP, 14f, resources.displayMetrics
+        )
+        addBtnText.typeface = Fonts.bold(context)
+        addBtnText.letterSpacing = 0.12f
+        val ty = r.centerY() - (addBtnText.ascent() + addBtnText.descent()) / 2f
+        canvas.drawText("+  ADD PAGE", r.centerX(), ty, addBtnText)
     }
 
     /** Jump to a sheet (0-based) and fit it. */
@@ -470,11 +656,7 @@ class DrawingView @JvmOverloads constructor(
     fun canUndo() = undoStack.isNotEmpty()
     fun canRedo() = redoStack.isNotEmpty()
 
-    private fun cloneStroke(s: Stroke): Stroke {
-        val p = ArrayList(s.points)
-        val pr = s.pressures?.let { ArrayList(it) }
-        return Stroke(p, s.color, s.width, s.eraser, s.straight, pr).also { it.seal() }
-    }
+    private fun cloneStroke(s: Stroke): Stroke = s.copy()
 
     fun captureState(): DocumentState = DocumentState(
         // Strokes are intentionally NOT copied: object undo/redo (restoreState)
@@ -515,6 +697,7 @@ class DrawingView @JvmOverloads constructor(
         selected.clear()
         selectingRect = false
         listener?.onSelection(false)
+        contentDirty = true
     }
 
     /** Reset zoom level while keeping the same canvas position/page in view. */
@@ -614,6 +797,7 @@ class DrawingView @JvmOverloads constructor(
             is Action.Document -> restoreState(a.before)
         }
         redoStack.add(a)
+        strokeVersion++
         clearSelectionQuiet()
         notifyHistory()
         repaintForAction(a, before)
@@ -631,6 +815,7 @@ class DrawingView @JvmOverloads constructor(
             is Action.Document -> restoreState(a.after)
         }
         undoStack.add(a)
+        strokeVersion++
         clearSelectionQuiet()
         notifyHistory()
         repaintForAction(a, before)
@@ -656,18 +841,10 @@ class DrawingView @JvmOverloads constructor(
         return out
     }
 
+    @Suppress("UNUSED_PARAMETER")
     private fun repaintForAction(a: Action, before: RectF?) {
-        // A Clear can touch the whole page, so fall back to a full repaint.
-        if (a is Action.Clear) { invalidate(); return }
-        val after = actionBounds(a)
-        val dirty = when {
-            before != null && after != null -> RectF(before).apply { union(after) }
-            before != null -> before
-            after != null -> after
-            else -> null
-        }
-        if (dirty == null) invalidate()
-        else invalidateWorld(dirty.left, dirty.top, dirty.right, dirty.bottom, 6f / zoom)
+        // One re-record of the cached content layer; the overlay is untouched.
+        invalidateContent()
     }
 
     fun clearAll() {
@@ -675,7 +852,7 @@ class DrawingView @JvmOverloads constructor(
         push(Action.Clear(ArrayList(strokes)))
         strokes.clear()
         clearSelection()
-        invalidate()
+        invalidateContent()
     }
 
     fun hasSelection() = selected.isNotEmpty()
@@ -692,7 +869,7 @@ class DrawingView @JvmOverloads constructor(
         strokes.removeAll(selected.toSet())
         push(Action.Remove(items))
         clearSelection()
-        invalidate()
+        invalidateContent()
     }
 
     fun clearSelection() {
@@ -716,6 +893,22 @@ class DrawingView @JvmOverloads constructor(
     // =====================================================================
     //  Layout / viewport
     // =====================================================================
+
+    override fun onDetachedFromWindow() {
+        super.onDetachedFromWindow()
+        cancelHold()
+        contentNode.discardDisplayList()
+        contentDirty = true
+    }
+
+    /** Free the cached GPU layer while the editor is in the background. */
+    override fun onWindowVisibilityChanged(visibility: Int) {
+        super.onWindowVisibilityChanged(visibility)
+        if (visibility != VISIBLE) {
+            contentNode.discardDisplayList()
+            contentDirty = true
+        }
+    }
 
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
         super.onSizeChanged(w, h, oldw, oldh)
@@ -762,6 +955,7 @@ class DrawingView @JvmOverloads constructor(
     }
 
     private fun growPageFor(x: Float, y: Float) {
+        if (isPdf) { maybeAutoAppendPage(x, y); return }
         when (pageMode) {
             NoteStore.PAGE_LIMITED, NoteStore.PAGE_PDF -> return   // fixed sheets, never grow
             NoteStore.PAGE_MULTI_INFINITE -> {
@@ -779,7 +973,7 @@ class DrawingView @JvmOverloads constructor(
                         max(1, ceil((page.top - (y - GROW_MARGIN)) / PAGE_BREAK_H).toInt())
                     grew = true
                 }
-                if (grew) invalidate()
+                if (grew) invalidateContent()
             }
             else -> {
                 // PAGE_INFINITE: free canvas, grows in every direction
@@ -788,25 +982,26 @@ class DrawingView @JvmOverloads constructor(
                 if (x < page.left + GROW_MARGIN) { page.left = x - GROW_BY; grew = true }
                 if (y > page.bottom - GROW_MARGIN) { page.bottom = y + GROW_BY; grew = true }
                 if (y < page.top + GROW_MARGIN) { page.top = y - GROW_BY; grew = true }
-                if (grew) invalidate()
+                if (grew) invalidateContent()
             }
         }
     }
 
-    /** Repaints only the given world rectangle - the core of requirement 6. */
+    /**
+     * Overlay-only repaint (live stroke, previews, laser, handles). The cached
+     * content layer is reused as-is. (With hardware acceleration Android
+     * repaints the whole view anyway, so a dirty rectangle buys nothing.)
+     */
+    @Suppress("UNUSED_PARAMETER")
     private fun invalidateWorld(l: Float, t: Float, r: Float, b: Float, padWorld: Float) {
-        val x0 = (l - padWorld) * zoom + panX
-        val y0 = (t - padWorld) * zoom + panY
-        val x1 = (r + padWorld) * zoom + panX
-        val y1 = (b + padWorld) * zoom + panY
-        invalidate(
-            floor(x0).toInt() - 1, floor(y0).toInt() - 1,
-            ceil(x1).toInt() + 1, ceil(y1).toInt() + 1
-        )
+        invalidate()
     }
 
-    private fun invalidateStroke(s: Stroke) =
-        invalidateWorld(s.bounds.left, s.bounds.top, s.bounds.right, s.bounds.bottom, 2f / zoom)
+    /** The document changed: re-record the cached content layer once. */
+    private fun invalidateContent() {
+        contentDirty = true
+        invalidate()
+    }
 
     // =====================================================================
     //  Touch
@@ -845,6 +1040,7 @@ class DrawingView @JvmOverloads constructor(
                 }
             }
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                if (ev.actionMasked == MotionEvent.ACTION_CANCEL) addPagePressed = false
                 onUp()
                 mode = MODE_NONE
             }
@@ -869,6 +1065,13 @@ class DrawingView @JvmOverloads constructor(
 
         if (hitVBar(sx, sy)) { mode = MODE_BAR_V; barGrab = sy; listener?.onGesture(); return }
         if (hitHBar(sx, sy)) { mode = MODE_BAR_H; barGrab = sx; listener?.onGesture(); return }
+        // "+ ADD PAGE" under the last PDF sheet (works with finger or pen, any tool)
+        if (addPageButton(tmpRect) && tmpRect.contains(sx, sy)) {
+            mode = MODE_ADD_PAGE
+            addPagePressed = true
+            invalidate()
+            return
+        }
 
         val drawingTool = tool != Tool.SELECT
         if (drawingTool) clearActiveObject()   // hide the object frame while drawing
@@ -886,15 +1089,21 @@ class DrawingView @JvmOverloads constructor(
         val effectiveTool =
             if (ev.getToolType(0) == MotionEvent.TOOL_TYPE_ERASER) Tool.ERASER else tool
 
+        snapped = null
+        freehandShape = false
         when (effectiveTool) {
-            Tool.PEN -> startStroke(wx, wy, penColor, penWidth, stylus, ev.pressure)
+            Tool.PEN -> {
+                startStroke(wx, wy, penColor, penWidth, stylus, ev.pressure)
+                if (shapeDetect) armHold(sx, sy)
+            }
             Tool.ERASER -> {
                 mode = MODE_DRAW
                 drawingWithStylus = stylus
-                current = Stroke(ArrayList(64), 0, eraserWidth, eraser = true).also {
+                current = Stroke(FloatList(64), 0, eraserWidth, eraser = true).also {
                     it.addPoint(wx, wy)
                     it.extend()
                 }
+                if (eraserInContent()) contentDirty = true
             }
             Tool.STROKE_ERASER -> {
                 mode = MODE_STROKE_ERASE
@@ -918,7 +1127,14 @@ class DrawingView @JvmOverloads constructor(
                 listener?.onCreateTextAt(wx, wy)
                 mode = MODE_NONE
             }
-            Tool.SHAPE -> {
+            Tool.SHAPE -> if (shapeDetect && shapeFreehand) {
+                // Detector mode: draw the shape freehand; it is recognised and
+                // snapped when the pen lifts (or when the pen is held still).
+                startStroke(wx, wy, penColor, shapeWidth, stylus = false, pressure = 1f)
+                drawingWithStylus = stylus
+                freehandShape = true
+                armHold(sx, sy)
+            } else {
                 mode = MODE_SHAPE
                 drawingWithStylus = stylus
                 shapeX0 = wx; shapeY0 = wy
@@ -934,9 +1150,11 @@ class DrawingView @JvmOverloads constructor(
                     pivotY = selBounds.centerY()
                     handleStartDist = max(1f, hypot(wx - pivotX, wy - pivotY))
                     accScale = 1f
+                    liftSelection()
                 } else if (selected.isNotEmpty() && selBounds.contains(wx, wy)) {
                     mode = MODE_SEL_MOVE
                     accDX = 0f; accDY = 0f
+                    liftSelection()
                 } else if (beginObjectGesture(wx, wy)) {
                     // consumed by the active object's frame (move/resize/rotate/toolbar)
                 } else if (hitObjectAt(wx, wy)) {
@@ -970,6 +1188,8 @@ class DrawingView @JvmOverloads constructor(
         for (s in strokes) {
             if (s.eraser) continue
             val tol = s.width / 2f + 16f / zoom      // easy to tap, but…
+            if (wx < s.bounds.left - tol || wx > s.bounds.right + tol ||
+                wy < s.bounds.top - tol || wy > s.bounds.bottom + tol) continue
             val d = s.distanceTo(wx, wy)
             if (d <= tol && d < bestD) { bestD = d; best = s }   // …nearest wins
         }
@@ -987,8 +1207,8 @@ class DrawingView @JvmOverloads constructor(
         // normal constant width instead of a permanently "pressed" thick line.
         val usePressure = stylus && pressure > 0f && pressure < 0.999f
         pressEma = if (usePressure) pressure.coerceIn(0.02f, 1f) else 0.5f
-        val pr = if (usePressure) ArrayList<Float>(64) else null
-        current = Stroke(ArrayList(64), color, width, eraser = false, straight = false, pressures = pr).also {
+        val pr = if (usePressure) FloatList(64) else null
+        current = Stroke(FloatList(64), color, width, eraser = false, straight = false, pressures = pr).also {
             if (usePressure) it.addPoint(wx, wy, pressureToWidth(pressEma)) else it.addPoint(wx, wy)
             it.extend()
         }
@@ -1002,8 +1222,10 @@ class DrawingView @JvmOverloads constructor(
                     mode == MODE_STROKE_ERASE || mode == MODE_SHAPE)
         ) return
         if (ev.pointerCount != 2) return
+        cancelHold()
         current?.let { c ->
-            if (c.points.size <= 12) current = null else finishStroke()
+            if (c.points.size <= 12) { current = null; snapped = null } else finishStroke()
+            if (c.eraser) contentDirty = true
         }
         activeLaser = null
         shapePreview = null
@@ -1011,6 +1233,8 @@ class DrawingView @JvmOverloads constructor(
         if (mode == MODE_SEL_MOVE) finishSelMove()
         if (mode == MODE_SEL_SCALE) finishSelScale()
         if (mode == MODE_STROKE_ERASE) finishStrokeErase()
+        if (mode == MODE_OBJ_XFORM) finishObjectGesture()
+        addPagePressed = false
         mode = MODE_PANZOOM
         pfx = (ev.getX(0) + ev.getX(1)) / 2f
         pfy = (ev.getY(0) + ev.getY(1)) / 2f
@@ -1051,6 +1275,17 @@ class DrawingView @JvmOverloads constructor(
                 val c = current ?: return
                 val idx = ev.findPointerIndex(activePointerId)
                 if (idx < 0) return
+                // Snapped by "draw and hold": the shape is final until lift.
+                if (snapped != null) return
+                if (shapeDetect && !c.eraser) {
+                    val ex = ev.getX(idx); val ey = ev.getY(idx)
+                    if (abs(ex - holdSX) > holdSlop || abs(ey - holdSY) > holdSlop) {
+                        // moved: restart the "held still" clock (the pending
+                        // check re-schedules itself, no per-event posting)
+                        holdSX = ex; holdSY = ey
+                        holdSince = SystemClock.uptimeMillis()
+                    }
+                }
                 var dl = c.points[c.points.size - 2]
                 var dt = c.points[c.points.size - 1]
                 var dr = dl
@@ -1083,7 +1318,8 @@ class DrawingView @JvmOverloads constructor(
                     if (y < dt) dt = y; if (y > db) db = y
                 }
                 c.extend()
-                invalidateWorld(dl, dt, dr, db, c.width * 1.8f + 2f / zoom)
+                if (c.eraser && eraserInContent()) invalidateContent()
+                else invalidateWorld(dl, dt, dr, db, c.width * 1.8f + 2f / zoom)
             }
             MODE_LASER -> {
                 val idx = ev.findPointerIndex(activePointerId)
@@ -1160,6 +1396,10 @@ class DrawingView @JvmOverloads constructor(
                     recomputeSelBounds()
                     invalidate()
                 }
+            }
+            MODE_ADD_PAGE -> {
+                val inside = addPageButton(tmpRect) && tmpRect.contains(ev.x, ev.y)
+                if (inside != addPagePressed) { addPagePressed = inside; invalidate() }
             }
             MODE_OBJ_XFORM -> {
                 val wx = toWorldX(ev.x)
@@ -1250,6 +1490,7 @@ class DrawingView @JvmOverloads constructor(
     }
 
     private fun onUp() {
+        cancelHold()
         when (mode) {
             MODE_DRAW -> finishStroke()
             MODE_LASER -> finishLaser()
@@ -1275,6 +1516,11 @@ class DrawingView @JvmOverloads constructor(
             MODE_SEL_MOVE -> finishSelMove()
             MODE_SEL_SCALE -> finishSelScale()
             MODE_OBJ_XFORM -> finishObjectGesture()
+            MODE_ADD_PAGE -> {
+                val add = addPagePressed
+                addPagePressed = false
+                if (add) appendPdfPage(scrollTo = true) else invalidate()
+            }
         }
         drawingWithStylus = false
         activePointerId = -1
@@ -1284,18 +1530,84 @@ class DrawingView @JvmOverloads constructor(
     private fun finishStroke() {
         var c = current ?: return
         current = null
-        // The stroke is committed exactly as it was drawn - no recognition and
-        // no smoothing pass. Stylus strokes keep their per-point pressure width;
+        val wasFreehandShape = freehandShape
+        freehandShape = false
+
+        // Shape detector: a snapped (held) stroke, or a freehand drawing made
+        // with the SHAPE tool, is committed as the perfect shape instead.
+        var shape = snapped
+        snapped = null
+        if (shape == null && wasFreehandShape && !c.eraser) {
+            shape = recognizeShape(c)
+            if (shape != null) onShapeSnapped?.invoke(snappedLabel)
+        }
+        if (shape != null) {
+            shape.seal()
+            strokes.add(shape)
+            push(Action.Add(listOf(shape)))
+            return
+        }
+
+        // Otherwise the stroke is committed exactly as it was drawn - no
+        // smoothing pass. Stylus strokes keep their per-point pressure width;
         // if the pen never actually varied its pressure, store a plain stroke.
         c.pressures?.let { pr ->
-            if (pr.isNotEmpty() && (pr.maxOrNull()!! - pr.minOrNull()!!) < 0.02f) {
+            if (pr.isNotEmpty() && (pr.max() - pr.min()) < 0.02f) {
                 c = Stroke(c.points, c.color, c.width * pr[0], eraser = false, straight = false, pressures = null)
             }
         }
         c.seal()
         strokes.add(c)
         push(Action.Add(listOf(c)))
-        invalidateStroke(c)
+    }
+
+    // ---------- Shape detector ----------
+
+    /** Starts the "pen held still" timer from screen point (sx, sy). */
+    private fun armHold(sx: Float, sy: Float) {
+        holdSX = sx; holdSY = sy
+        holdSince = SystemClock.uptimeMillis()
+        removeCallbacks(holdRunnable)
+        postDelayed(holdRunnable, HOLD_MS)
+    }
+
+    private fun cancelHold() {
+        removeCallbacks(holdRunnable)
+    }
+
+    /** Pen held still: snap the live stroke into a shape if one is recognised. */
+    private fun snapHeldStroke() {
+        if (!shapeDetect || mode != MODE_DRAW || snapped != null) return
+        val still = SystemClock.uptimeMillis() - holdSince
+        if (still < HOLD_MS) { postDelayed(holdRunnable, HOLD_MS - still); return }
+        val c = current ?: return
+        if (c.eraser) return
+        // ignore taps / dots: needs a real drawing first
+        if (hypot(c.bounds.width(), c.bounds.height()) * zoom < 36f * density) return
+        val shape = recognizeShape(c) ?: return
+        snapped = shape
+        onShapeSnapped?.invoke(snappedLabel)
+        performHapticFeedback(HapticFeedbackConstants.CONFIRM)
+        invalidate()
+    }
+
+    /** Runs the recogniser on [c]; returns the perfect shape as a stroke, or null. */
+    private fun recognizeShape(c: Stroke): Stroke? {
+        val n = c.points.size / 2
+        if (n < 5) return null
+        val r = ShapeRecognizer.recognize(c.points.rawArray(), n) ?: return null
+        // Pressure strokes keep their average thickness as a constant width.
+        var w = c.width
+        c.pressures?.let { pr ->
+            if (pr.isNotEmpty()) {
+                var sum = 0f
+                for (i in 0 until pr.size) sum += pr[i]
+                w *= sum / pr.size
+            }
+        }
+        snappedLabel = r.label
+        return Stroke(FloatList(r.points, r.points.size), c.color, w, eraser = false, straight = true)
+            .also { it.rebuild() }
     }
 
     // ---------- Objects (requirement 2 / C4) ----------
@@ -1452,7 +1764,7 @@ class DrawingView @JvmOverloads constructor(
         activeImage?.let { it.x += dx; it.y += dy }
         objDownWX = wx; objDownWY = wy
         objDidChange = true
-        invalidate()
+        invalidateContent()
     }
 
     private fun resizeActiveObject(wx: Float, wy: Float) {
@@ -1482,7 +1794,7 @@ class DrawingView @JvmOverloads constructor(
             im.x = nLeft; im.y = nTop; im.w = (nRight - nLeft).coerceAtLeast(minW); im.h = (nBottom - nTop).coerceAtLeast(minH)
         }
         objDidChange = true
-        invalidate()
+        invalidateContent()
     }
 
     private fun rotateActiveObject(wx: Float, wy: Float) {
@@ -1491,7 +1803,7 @@ class DrawingView @JvmOverloads constructor(
         activeText?.rotation = rot
         activeImage?.rotation = rot
         objDidChange = true
-        invalidate()
+        invalidateContent()
     }
 
     private fun finishObjectGesture() {
@@ -1502,7 +1814,7 @@ class DrawingView @JvmOverloads constructor(
             objGestureBefore = null
             onObjectsChanged?.invoke()
         }
-        invalidate()
+        invalidateContent()
     }
 
     fun deleteActiveObject() {
@@ -1510,10 +1822,11 @@ class DrawingView @JvmOverloads constructor(
         val before = captureState()
         activeText?.let { textObjects.remove(it) }
         activeImage?.let { imageObjects.remove(it) }
+        commitDocumentState(before)
         activeText = null; activeImage = null
         objMode = OBJ_NONE
         onObjectsChanged?.invoke()
-        invalidate()
+        invalidateContent()
     }
 
     fun addTextObject(text: String, wx: Float = toWorldX(width * 0.3f), wy: Float = toWorldY(height * 0.32f)): TextObject {
@@ -1530,7 +1843,7 @@ class DrawingView @JvmOverloads constructor(
         activateText(o)
         commitDocumentState(before)
         onObjectsChanged?.invoke()
-        invalidate()
+        invalidateContent()
         return o
     }
 
@@ -1547,7 +1860,7 @@ class DrawingView @JvmOverloads constructor(
         activateImage(o)
         commitDocumentState(before)
         onObjectsChanged?.invoke()
-        invalidate()
+        invalidateContent()
         return o
     }
 
@@ -1558,7 +1871,7 @@ class DrawingView @JvmOverloads constructor(
 
             if (activeText === t) activeText = null
             commitDocumentState(before)
-            onObjectsChanged?.invoke(); invalidate()
+            onObjectsChanged?.invoke(); invalidateContent()
         }
     }
 
@@ -1569,17 +1882,17 @@ class DrawingView @JvmOverloads constructor(
 
             if (activeImage === im) activeImage = null
             commitDocumentState(before)
-            onObjectsChanged?.invoke(); invalidate()
+            onObjectsChanged?.invoke(); invalidateContent()
         }
     }
 
-    fun notifyObjectEdited() { onObjectsChanged?.invoke(); invalidate() }
+    fun notifyObjectEdited() { onObjectsChanged?.invoke(); invalidateContent() }
 
     fun setObjects(texts: List<TextObject>, images: List<ImageObject>) {
         textObjects.clear(); textObjects.addAll(texts)
         imageObjects.clear(); imageObjects.addAll(images)
         activeText = null; activeImage = null
-        invalidate()
+        invalidateContent()
     }
 
     private fun drawWrappedText(canvas: Canvas, o: TextObject) {
@@ -1603,7 +1916,7 @@ class DrawingView @JvmOverloads constructor(
         objTextPaint.textScaleX = 1f
         objTextPaint.textSize = (o.h / 1.28f).coerceAtLeast(12f)
         o.w = objTextPaint.measureText(o.text).coerceAtLeast(60f)
-        invalidate()
+        invalidateContent()
     }
 
     /** Fits a text object's box snugly around its text at the given font size. */
@@ -1613,7 +1926,7 @@ class DrawingView @JvmOverloads constructor(
         o.size = size
         o.w = objTextPaint.measureText(o.text).coerceAtLeast(60f)
         o.h = size * 1.28f
-        invalidate()
+        invalidateContent()
     }
 
     private fun drawObjects(canvas: Canvas) {
@@ -1639,7 +1952,11 @@ class DrawingView @JvmOverloads constructor(
         canvas.rotate(deg, cx, cy)
 
         objFramePaint.strokeWidth = 1.4f / zoom
-        objFramePaint.pathEffect = DashPathEffect(floatArrayOf(9f / zoom, 7f / zoom), 0f)
+        if (objDashZoom != zoom) {
+            objDash = DashPathEffect(floatArrayOf(9f / zoom, 7f / zoom), 0f)
+            objDashZoom = zoom
+        }
+        objFramePaint.pathEffect = objDash
         canvas.drawRect(tmpBounds, objFramePaint)
         objFramePaint.pathEffect = null
 
@@ -1693,12 +2010,16 @@ class DrawingView @JvmOverloads constructor(
         if (hypot(s.bounds.width(), s.bounds.height()) < 12f / zoom) { invalidate(); return }
         // Copy out of the reusable buffer before storing it.
         val committed = Stroke(
-            ArrayList(shapePts), s.color, s.width, eraser = false, straight = true
+            FloatList(shapePts), s.color, s.width, eraser = false, straight = true
         )
         committed.seal()
         strokes.add(committed)
         push(Action.Add(listOf(committed)))
-        invalidateStroke(committed)
+        // Detector ON: the picked shape was a one-off - back to automatic.
+        if (shapeDetect && !shapeFreehand) {
+            shapeFreehand = true
+            onShapeModeChanged?.invoke()
+        }
     }
 
     private fun finishLaser() {
@@ -1720,6 +2041,7 @@ class DrawingView @JvmOverloads constructor(
             push(Action.Move(ArrayList(selected), accDX, accDY))
             accDX = 0f; accDY = 0f
         }
+        dropSelection()
     }
 
     private fun finishSelScale() {
@@ -1727,6 +2049,24 @@ class DrawingView @JvmOverloads constructor(
             push(Action.Scale(ArrayList(selected), accScale, pivotX, pivotY))
         }
         accScale = 1f
+        dropSelection()
+    }
+
+    /**
+     * While selected strokes are dragged/scaled they are taken out of the
+     * cached content layer and drawn in the overlay, so each drag frame only
+     * redraws the selection instead of the whole page.
+     */
+    private fun liftSelection() {
+        lifted.clear()
+        lifted.addAll(selected)
+        invalidateContent()
+    }
+
+    private fun dropSelection() {
+        if (lifted.isEmpty()) return
+        lifted.clear()
+        invalidateContent()
     }
 
     private fun eraseStrokesAt(wx: Float, wy: Float) {
@@ -1744,9 +2084,8 @@ class DrawingView @JvmOverloads constructor(
             i--
         }
         if (hit) {
-            invalidateWorld(
-                tmpBounds.left, tmpBounds.top, tmpBounds.right, tmpBounds.bottom, 2f / zoom
-            )
+            strokeVersion++
+            invalidateContent()
         }
     }
 
@@ -1758,7 +2097,9 @@ class DrawingView @JvmOverloads constructor(
         undoStack.add(a)
         if (undoStack.size > 100) undoStack.removeAt(0)
         redoStack.clear()
+        strokeVersion++
         notifyHistory()
+        invalidateContent()
     }
 
     private fun notifyHistory() {
@@ -1831,22 +2172,19 @@ class DrawingView @JvmOverloads constructor(
     // =====================================================================
 
     override fun onDraw(canvas: Canvas) {
-        val bg = if (dark) Color.BLACK else Color.WHITE
-        val outside = if (dark) 0xFF141414.toInt() else 0xFFEBEBEB.toInt()
-        val border = if (dark) 0xFF2C2C2C.toInt() else 0xFFD4D4D4.toInt()
-
-        canvas.drawColor(outside)
+        if (canvas.isHardwareAccelerated) {
+            recordContentIfNeeded()
+            canvas.drawRenderNode(contentNode)
+        } else {
+            // software canvas (e.g. a screenshot of the view): draw directly
+            drawContent(canvas)
+        }
 
         canvas.save()
         canvas.translate(panX, panY)
         canvas.scale(zoom, zoom)
 
-        if (isPdf) {
-            drawPdfSheets(canvas, bg, border)
-        } else {
-            drawPlainPage(canvas, bg, border)
-        }
-
+        drawOverlayInk(canvas)
         drawLasers(canvas)
 
         if (selectingRect || selected.isNotEmpty()) {
@@ -1871,10 +2209,57 @@ class DrawingView @JvmOverloads constructor(
 
         canvas.restore()
 
+        if (addPageButton(tmpRect)) drawAddPageButton(canvas, tmpRect)
+
         fillPaint.color = 0xAAD71921.toInt()
         if (vThumb(tmpRect)) canvas.drawRoundRect(tmpRect, barThick, barThick, fillPaint)
         if (hThumb(tmpRect)) canvas.drawRoundRect(tmpRect, barThick, barThick, fillPaint)
     }
+
+    /**
+     * Re-records the cached content layer only when something it shows has
+     * changed: the document (contentDirty) or the viewport / view size. On a
+     * plain pen frame none of these change, so the GPU re-uses the layer.
+     */
+    private fun recordContentIfNeeded() {
+        val w = width
+        val h = height
+        if (w <= 0 || h <= 0) return
+        if (!contentDirty && recPanX == panX && recPanY == panY && recZoom == zoom &&
+            recW == w && recH == h
+        ) return
+        contentDirty = false
+        recPanX = panX; recPanY = panY; recZoom = zoom; recW = w; recH = h
+        contentNode.setPosition(0, 0, w, h)
+        val rc = contentNode.beginRecording(w, h)
+        try {
+            drawContent(rc)
+        } finally {
+            contentNode.endRecording()
+        }
+    }
+
+    /** Everything static: background, page/sheets, PDF, objects, finished ink. */
+    private fun drawContent(canvas: Canvas) {
+        val bg = if (dark) Color.BLACK else Color.WHITE
+        val outside = if (dark) 0xFF141414.toInt() else 0xFFEBEBEB.toInt()
+        val border = if (dark) 0xFF2C2C2C.toInt() else 0xFFD4D4D4.toInt()
+
+        canvas.drawColor(outside)
+        // The world rectangle on screen - used for culling (the recording
+        // canvas has no meaningful dirty clip).
+        viewWorld.set(-panX / zoom, -panY / zoom, (width - panX) / zoom, (height - panY) / zoom)
+
+        canvas.save()
+        canvas.translate(panX, panY)
+        canvas.scale(zoom, zoom)
+        if (isPdf) drawPdfSheets(canvas, bg, border) else drawPlainPage(canvas, bg, border)
+        canvas.restore()
+    }
+
+    /** True while the live pixel eraser must run inside the content layer. */
+    private fun eraserInContent(): Boolean =
+        isPdf || textObjects.isNotEmpty() || imageObjects.isNotEmpty()
 
     /** The original single-page renderer (infinite length / infinite pages). */
     private fun drawPlainPage(canvas: Canvas, bg: Int, border: Int) {
@@ -1889,7 +2274,8 @@ class DrawingView @JvmOverloads constructor(
             linePaint.strokeWidth = 1f / zoom
             var y = page.top + PAGE_BREAK_H
             while (y < page.bottom - 1f) {
-                canvas.drawLine(page.left, y, page.right, y, linePaint)
+                if (y >= viewWorld.top && y <= viewWorld.bottom)
+                    canvas.drawLine(page.left, y, page.right, y, linePaint)
                 y += PAGE_BREAK_H
             }
         }
@@ -1899,52 +2285,111 @@ class DrawingView @JvmOverloads constructor(
         // Requirement C4: object layer sits under the ink so writing goes on top.
         drawObjects(canvas)
 
-        // Ink is rendered on its own layer. Normal eraser strokes use CLEAR so
-        // they remove only ink and reveal an image underneath instead of painting
-        // the page background over the image.
-        if (canvas.getClipBounds(clipI)) visible.set(clipI) else visible.set(page)
+        visible.set(viewWorld)
+        if (!visible.intersect(page)) return
+
+        val liveEraser = current?.takeIf { it.eraser && eraserInContent() }
 
         // The offscreen "reveal" layer (CLEAR eraser over objects) is expensive,
         // so only pay for it when there is BOTH an object to reveal AND an eraser
         // stroke. Otherwise draw strokes directly - the eraser just paints the
         // page background, which looks identical when nothing is underneath.
         val hasObjects = textObjects.isNotEmpty() || imageObjects.isNotEmpty()
-        var hasEraser = false
-        if (hasObjects) { for (s in strokes) if (s.eraser) { hasEraser = true; break } }
+        var hasEraser = liveEraser != null
+        if (hasObjects && !hasEraser) { for (s in strokes) if (s.eraser) { hasEraser = true; break } }
 
         if (hasObjects && hasEraser) {
-            val inkLayer = canvas.saveLayer(page, null)
+            val inkLayer = canvas.saveLayer(visible, null)
             for (s in strokes) {
-                if (s.eraser || !RectF.intersects(s.bounds, visible)) continue
-                strokePaint.color = s.color
-                strokePaint.style = Paint.Style.STROKE
-                s.draw(canvas, strokePaint)
+                if (!RectF.intersects(s.bounds, visible) || s in lifted) continue
+                if (s.eraser) {
+                    eraserClearPaint.strokeWidth = s.width
+                    s.draw(canvas, eraserClearPaint)
+                } else {
+                    strokePaint.color = s.color
+                    strokePaint.style = Paint.Style.STROKE
+                    s.draw(canvas, strokePaint)
+                }
             }
-            eraserClearPaint.strokeWidth = 1f
-            for (s in strokes) {
-                if (!s.eraser || !RectF.intersects(s.bounds, visible)) continue
-                eraserClearPaint.strokeWidth = s.width
-                s.draw(canvas, eraserClearPaint)
+            liveEraser?.let {
+                eraserClearPaint.strokeWidth = it.width
+                it.draw(canvas, eraserClearPaint)
             }
             canvas.restoreToCount(inkLayer)
         } else {
             for (s in strokes) {
-                if (!RectF.intersects(s.bounds, visible)) continue
+                if (!RectF.intersects(s.bounds, visible) || s in lifted) continue
                 strokePaint.color = if (s.eraser) bg else s.color
                 strokePaint.style = Paint.Style.STROKE
                 s.draw(canvas, strokePaint)
             }
         }
-        current?.let { c ->
-            strokePaint.color = if (c.eraser) bg else c.color
-            c.draw(canvas, strokePaint)
+    }
+
+    // =====================================================================
+    //  Overlay (drawn every frame on top of the cached content)
+    // =====================================================================
+
+    private fun drawOverlayInk(canvas: Canvas) {
+        if (lifted.isNotEmpty()) for (s in lifted) drawOverlayStroke(canvas, s, 255)
+        val snap = snapped
+        if (snap != null) {
+            drawOverlayStroke(canvas, snap, 255)
+        } else {
+            current?.let { c ->
+                if (!(c.eraser && eraserInContent())) drawOverlayStroke(canvas, c, 255)
+            }
         }
-        shapePreview?.let { s ->
-            strokePaint.color = s.color
-            strokePaint.alpha = 170
+        shapePreview?.let { drawOverlayStroke(canvas, it, 170) }
+    }
+
+    /**
+     * Draws one stroke above the content layer, matching how it will look once
+     * committed: clipped to the page / sheets, and in dark PDF notebooks shown
+     * in its paper colour where it lies on the white PDF page.
+     */
+    private fun drawOverlayStroke(canvas: Canvas, s: Stroke, alpha: Int) {
+        val bg = if (dark) Color.BLACK else Color.WHITE
+        strokePaint.style = Paint.Style.STROKE
+        if (!isPdf) {
+            canvas.save()
+            canvas.clipRect(page)
+            strokePaint.color = if (s.eraser) bg else s.color
+            strokePaint.alpha = alpha
             s.draw(canvas, strokePaint)
             strokePaint.alpha = 255
+            canvas.restore()
+            return
         }
+        if (visFirst < 0) return
+        canvas.save()
+        canvas.clipPath(pdfClipPath)
+        val swapped = PdfNotebook.swapBW(s.color)
+        if (!dark || swapped == s.color) {
+            strokePaint.color = s.color
+            strokePaint.alpha = alpha
+            s.draw(canvas, strokePaint)
+        } else {
+            canvas.save()
+            for (i in visFirst..visLast) if (!pdfSlots[i].isBlank) canvas.clipOutRect(pdfSlots[i].pdf)
+            strokePaint.color = s.color
+            strokePaint.alpha = alpha
+            s.draw(canvas, strokePaint)
+            canvas.restore()
+            for (i in visFirst..visLast) {
+                if (pdfSlots[i].isBlank) continue
+                val r = pdfSlots[i].pdf
+                if (!RectF.intersects(r, s.bounds)) continue
+                canvas.save()
+                canvas.clipRect(r)
+                strokePaint.color = swapped
+                strokePaint.alpha = alpha
+                s.draw(canvas, strokePaint)
+                canvas.restore()
+            }
+        }
+        strokePaint.alpha = 255
+        canvas.restore()
     }
 
     // =====================================================================
@@ -1952,8 +2397,8 @@ class DrawingView @JvmOverloads constructor(
     // =====================================================================
 
     private fun drawPdfSheets(canvas: Canvas, bg: Int, border: Int) {
-        // World-space rectangle currently being repainted (the dirty clip).
-        if (canvas.getClipBounds(clipI)) visible.set(clipI) else visible.set(page)
+        // World-space rectangle currently on screen.
+        visible.set(viewWorld)
 
         // Sheets are stacked top-to-bottom, so the visible ones are contiguous.
         visFirst = -1; visLast = -1
@@ -1964,15 +2409,15 @@ class DrawingView @JvmOverloads constructor(
             visLast = sl.index
         }
         val cache = pdfCache
+        pdfClipPath.rewind()
         if (visFirst < 0) return
-        // Tell the renderer what is on screen (from the full viewport, not just
-        // the dirty clip) so off-screen pages are skipped in its queue.
+        // Tell the renderer what is on screen so off-screen pages are skipped
+        // in its queue.
         cache?.let { c ->
-            val vt = (0f - panY) / zoom; val vb = (height - panY) / zoom
             var f = -1; var l = -1
             for (sl in pdfSlots) {
-                if (sl.sheet.bottom < vt) continue
-                if (sl.sheet.top > vb) break
+                if (sl.sheet.bottom < visible.top) continue
+                if (sl.sheet.top > visible.bottom) break
                 if (f < 0) f = sl.index
                 l = sl.index
             }
@@ -1981,7 +2426,6 @@ class DrawingView @JvmOverloads constructor(
 
         pageNumPaint.textSize = 64f
         pageNumPaint.color = if (dark) 0xFF6A6A6A.toInt() else 0xFF8A8A8A.toInt()
-        pdfClipPath.rewind()
         for (i in visFirst..visLast) {
             val sl = pdfSlots[i]
             // the canvas sheet
@@ -1990,20 +2434,22 @@ class DrawingView @JvmOverloads constructor(
             linePaint.color = border
             linePaint.strokeWidth = 1.5f / zoom
             canvas.drawRect(sl.sheet, linePaint)
-            // the PDF page - always white paper
-            fillPaint.color = Color.WHITE
-            canvas.drawRect(sl.pdf, fillPaint)
-            if (cache != null) {
-                val tier = cache.tierFor(max(sl.pdf.width(), sl.pdf.height()) * zoom)
-                val bmp = cache.best(sl.index, tier)
-                if (bmp != null) PdfNotebook.drawPdfBitmap(canvas, bmp, sl, pdfBmpPaint)
-                if (!cache.has(sl.index, tier)) cache.request(sl.index, tier)
-                // warm the neighbours at the cheapest tier for smooth scrolling
-                if (i == visFirst && i > 0) cache.request(i - 1, 0)
-                if (i == visLast && i < pdfSlots.size - 1) cache.request(i + 1, 0)
+            // the PDF page - always white paper (added pages have none)
+            if (!sl.isBlank) {
+                fillPaint.color = Color.WHITE
+                canvas.drawRect(sl.pdf, fillPaint)
+                if (cache != null) {
+                    val tier = cache.tierFor(max(sl.pdf.width(), sl.pdf.height()) * zoom)
+                    val bmp = cache.best(sl.page, tier)
+                    if (bmp != null) PdfNotebook.drawPdfBitmap(canvas, bmp, sl, pdfBmpPaint)
+                    if (!cache.has(sl.page, tier)) cache.request(sl.page, tier)
+                    // warm the neighbours at the cheapest tier for smooth scrolling
+                    if (i == visFirst && i > 0 && !pdfSlots[i - 1].isBlank) cache.request(pdfSlots[i - 1].page, 0)
+                    if (i == visLast && i < pdfSlots.size - 1 && !pdfSlots[i + 1].isBlank) cache.request(pdfSlots[i + 1].page, 0)
+                }
+                linePaint.color = if (dark) 0xFF3A3A3A.toInt() else 0xFFCFCFCF.toInt()
+                canvas.drawRect(sl.pdf, linePaint)
             }
-            linePaint.color = if (dark) 0xFF3A3A3A.toInt() else 0xFFCFCFCF.toInt()
-            canvas.drawRect(sl.pdf, linePaint)
             // page number, centred in the gap under the sheet
             canvas.drawText(
                 "${sl.index + 1} / ${pdfSlots.size}",
@@ -2013,6 +2459,7 @@ class DrawingView @JvmOverloads constructor(
         }
 
         // Ink, objects and previews only exist on the sheets, never in the gaps.
+        canvas.save()
         canvas.clipPath(pdfClipPath)
         drawObjects(canvas)
 
@@ -2023,10 +2470,11 @@ class DrawingView @JvmOverloads constructor(
         } else {
             // Dark canvas: themed ink around the PDF, paper-coloured ink on it.
             canvas.save()
-            for (i in visFirst..visLast) canvas.clipOutRect(pdfSlots[i].pdf)
+            for (i in visFirst..visLast) if (!pdfSlots[i].isBlank) canvas.clipOutRect(pdfSlots[i].pdf)
             drawInkInOrder(canvas, visible, paper = false)
             canvas.restore()
             for (i in visFirst..visLast) {
+                if (pdfSlots[i].isBlank) continue
                 val r = pdfSlots[i].pdf
                 if (!RectF.intersects(r, visible)) continue
                 canvas.save()
@@ -2037,17 +2485,19 @@ class DrawingView @JvmOverloads constructor(
             }
         }
         canvas.restoreToCount(layer)
+        canvas.restore()
     }
 
     /**
-     * Strokes in history order inside the current layer; erasers CLEAR only the
-     * ink so the PDF underneath is never rubbed out. [paper] = drawing onto the
-     * white PDF in dark mode, where theme-flipped black/white ink is shown in
-     * its light-paper colour.
+     * Finished strokes in history order inside the current layer; erasers
+     * CLEAR only the ink so the PDF underneath is never rubbed out. [paper] =
+     * drawing onto the white PDF in dark mode, where theme-flipped black/white
+     * ink is shown in its light-paper colour. A live pixel-eraser stroke is
+     * drawn here too, since only the layer can cut ink correctly.
      */
     private fun drawInkInOrder(canvas: Canvas, region: RectF, paper: Boolean) {
         for (s in strokes) {
-            if (!RectF.intersects(s.bounds, region)) continue
+            if (!RectF.intersects(s.bounds, region) || s in lifted) continue
             if (s.eraser) {
                 eraserClearPaint.strokeWidth = s.width
                 s.draw(canvas, eraserClearPaint)
@@ -2061,16 +2511,7 @@ class DrawingView @JvmOverloads constructor(
             if (c.eraser) {
                 eraserClearPaint.strokeWidth = c.width
                 c.draw(canvas, eraserClearPaint)
-            } else {
-                strokePaint.color = if (paper) PdfNotebook.swapBW(c.color) else c.color
-                c.draw(canvas, strokePaint)
             }
-        }
-        shapePreview?.let { sp ->
-            strokePaint.color = if (paper) PdfNotebook.swapBW(sp.color) else sp.color
-            strokePaint.alpha = 170
-            sp.draw(canvas, strokePaint)
-            strokePaint.alpha = 255
         }
     }
 
@@ -2211,14 +2652,8 @@ class DrawingView @JvmOverloads constructor(
         }
     }
 
+    @Suppress("UNUSED_PARAMETER")
     private fun postInvalidateWorld(l: Float, t: Float, r: Float, b: Float, padWorld: Float) {
-        val x0 = (l - padWorld) * zoom + panX
-        val y0 = (t - padWorld) * zoom + panY
-        val x1 = (r + padWorld) * zoom + panX
-        val y1 = (b + padWorld) * zoom + panY
-        postInvalidateOnAnimation(
-            floor(x0).toInt() - 1, floor(y0).toInt() - 1,
-            ceil(x1).toInt() + 1, ceil(y1).toInt() + 1
-        )
+        postInvalidateOnAnimation()
     }
 }

@@ -3,3 +3,7 @@ build/
 local.properties
 .idea/
 *.iml
+key_jks/
+*.jks
+*.keystore
+*.zip

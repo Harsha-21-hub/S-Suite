@@ -38,6 +38,15 @@ import kotlin.math.roundToInt
  *   PORTRAIT sheets   [ PDF ]
  *                     [ notes ]            (panel underneath)
  *
+ * Every sheet also has extra free space ([PAD]) on all four sides, in both
+ * orientations, so there is room to write above, below, left and right of the
+ * PDF + notes panel:
+ *
+ *          pad
+ *      pad [ PDF | notes ] pad          pad [ PDF   ] pad
+ *          pad                              [ notes ]
+ *                                           pad
+ *
  * Ink is moved with the part of the sheet it was written on: anything on or
  * around the PDF stays exactly on the PDF, anything in the notes panel moves
  * with the panel, keeping its exact shape. Nothing is ever rotated, scaled or
@@ -45,39 +54,73 @@ import kotlin.math.roundToInt
  *
  * Storage (alongside the normal note files):
  *   files/notes/pdf/<id>/source.pdf   the original PDF, untouched
- *   files/notes/pdf/<id>/layout.json  sheets, PDF rects and panel sizes (v2)
+ *   files/notes/pdf/<id>/layout.json  sheets, PDF rects, panel sizes, padding (v3)
  */
 object PdfNotebook {
 
     /**
      * One canvas sheet. [pdf] is the PDF page, [sheet] the whole drawable page,
      * [side] = notes panel on the right (landscape) instead of below (portrait).
-     * [freeW] x [freeH] is the notes panel size.
+     * [freeW] x [freeH] is the notes panel size. [pad] is the extra free space
+     * on all four sides of the sheet.
      */
     class Slot(
         val index: Int, val sheet: RectF, val pdf: RectF,
         val srcW: Float, val srcH: Float,
-        val freeW: Float, val freeH: Float, val side: Boolean
+        val freeW: Float, val freeH: Float, val side: Boolean,
+        val pad: Float = 0f,
+        /** PDF page shown on this sheet, or [BLANK] for an added empty page. */
+        val page: Int = index
     ) {
+        /** An added canvas page with no PDF page behind it. */
+        val isBlank get() = page < 0
+
         /** PDF page + its margin. */
         val blockW get() = pdf.width() + 2 * MARGIN
         val blockH get() = pdf.height() + 2 * MARGIN
 
-        /** Notes panel origin, relative to the sheet's top-left. */
+        /** Origin of the PDF block: the sheet corner plus the padding. */
+        val ox get() = sheet.left + pad
+        val oy get() = sheet.top + pad
+
+        /** Notes panel origin, relative to the PDF block origin. */
         val freeX get() = if (side) blockW else 0f
         val freeY get() = if (side) 0f else blockH
 
-        /** Is a point (relative to the sheet) in the notes panel? */
+        /** Is a point (relative to the block origin) in the notes panel? */
         fun inPanel(lx: Float, ly: Float) = if (side) lx >= blockW else ly >= blockH
+
+        /** PDF block + notes panel, without the padding (what Reset Zoom fits). */
+        fun content(out: RectF): RectF {
+            out.set(sheet.left + pad, sheet.top + pad, sheet.right - pad, sheet.bottom - pad)
+            return out
+        }
     }
 
-    /** Page size + notes panel size: everything needed to lay a sheet out. */
-    class PageSpec(val srcW: Float, val srcH: Float, val freeW: Float, val freeH: Float)
+    /**
+     * Page size + notes panel size: everything needed to lay a sheet out.
+     * [page] = PDF page index, [BLANK] for an added empty page, or
+     * [SAME_AS_INDEX] (the PDF page with the same position).
+     */
+    class PageSpec(
+        val srcW: Float, val srcH: Float, val freeW: Float, val freeH: Float,
+        val page: Int = SAME_AS_INDEX
+    )
+
+    /** Slot.page of an added empty canvas page. */
+    const val BLANK = -1
+    private const val SAME_AS_INDEX = -2
+
+    /** The specs a layout was built from (keeps blank pages blank). */
+    private fun specsOf(slots: List<Slot>): List<PageSpec> =
+        slots.map { PageSpec(it.srcW, it.srcH, it.freeW, it.freeH, it.page) }
 
     private const val PDF_LONG = 2400f     // long edge of a PDF page, world units
     private const val MARGIN = 120f        // space around the PDF page on its sheet
+    /** Extra writing space on all four sides of every sheet (both orientations). */
+    const val PAD = 640f
     const val GAP = 220f                   // gap between sheets (shows the page number)
-    private const val LAYOUT_VERSION = 2
+    private const val LAYOUT_VERSION = 3
 
     private fun notesDir(ctx: Context) = File(ctx.filesDir, "notes")
     fun dir(ctx: Context, id: String) = File(File(notesDir(ctx), "pdf"), id)
@@ -116,13 +159,13 @@ object PdfNotebook {
     fun defaultSide(sizes: List<Pair<Float, Float>>): Boolean =
         sizes.firstOrNull()?.let { it.second >= it.first } ?: true
 
-    fun layout(specs: List<PageSpec>, side: Boolean): List<Slot> {
+    fun layout(specs: List<PageSpec>, side: Boolean, pad: Float = PAD): List<Slot> {
         class Box(val sw: Float, val sh: Float, val pw: Float, val ph: Float)
         val boxes = specs.map { sp ->
             val (pw, ph) = pdfSize(sp.srcW, sp.srcH)
             val bw = pw + 2 * MARGIN; val bh = ph + 2 * MARGIN
-            if (side) Box(bw + sp.freeW, max(bh, sp.freeH), pw, ph)
-            else Box(max(bw, sp.freeW), bh + sp.freeH, pw, ph)
+            if (side) Box(bw + sp.freeW + 2 * pad, max(bh, sp.freeH) + 2 * pad, pw, ph)
+            else Box(max(bw, sp.freeW) + 2 * pad, bh + sp.freeH + 2 * pad, pw, ph)
         }
         val maxW = boxes.maxOfOrNull { it.sw } ?: 0f
         val out = ArrayList<Slot>(boxes.size)
@@ -130,8 +173,10 @@ object PdfNotebook {
         for ((i, b) in boxes.withIndex()) {
             val left = (maxW - b.sw) / 2f
             val sheet = RectF(left, y, left + b.sw, y + b.sh)
-            val pdf = RectF(left + MARGIN, y + MARGIN, left + MARGIN + b.pw, y + MARGIN + b.ph)
-            out.add(Slot(i, sheet, pdf, specs[i].srcW, specs[i].srcH, specs[i].freeW, specs[i].freeH, side))
+            val px = left + pad + MARGIN; val py = y + pad + MARGIN
+            val pdf = RectF(px, py, px + b.pw, py + b.ph)
+            val pg = specs[i].page.let { if (it == SAME_AS_INDEX) i else it }
+            out.add(Slot(i, sheet, pdf, specs[i].srcW, specs[i].srcH, specs[i].freeW, specs[i].freeH, side, pad, pg))
             y += b.sh + GAP
         }
         return out
@@ -148,7 +193,19 @@ object PdfNotebook {
 
     /** The same pages with the notes panel moved (the ORIENTATION button). */
     fun toggledLayout(slots: List<Slot>): List<Slot> =
-        layout(slots.map { PageSpec(it.srcW, it.srcH, it.freeW, it.freeH) }, !isLandscape(slots))
+        layout(specsOf(slots), !isLandscape(slots), slots.firstOrNull()?.pad ?: PAD)
+
+    /**
+     * The same notebook with one empty canvas page appended at the end. The
+     * new page copies the last sheet's size, so every existing sheet keeps
+     * exactly its position (no ink has to move).
+     */
+    fun withBlankPage(slots: List<Slot>): List<Slot> {
+        if (slots.isEmpty()) return slots
+        val last = slots.last()
+        val specs = specsOf(slots) + PageSpec(last.srcW, last.srcH, last.freeW, last.freeH, BLANK)
+        return layout(specs, isLandscape(slots), last.pad)
+    }
 
     fun saveSlots(ctx: Context, id: String, slots: List<Slot>) = saveLayout(ctx, id, slots)
 
@@ -159,14 +216,16 @@ object PdfNotebook {
      * part (used for the two halves of a stroke cut at the panel edge).
      */
     fun mapPoint(from: Slot, to: Slot, x: Float, y: Float, out: FloatArray, panel: Boolean? = null) {
-        var lx = x - from.sheet.left
-        var ly = y - from.sheet.top
+        // Relative to the PDF block origin, so sheets with different padding
+        // (the v2 -> v3 upgrade) still map the PDF part exactly onto the PDF.
+        var lx = x - from.ox
+        var ly = y - from.oy
         if (panel ?: from.inPanel(lx, ly)) {
             lx = lx - from.freeX + to.freeX
             ly = ly - from.freeY + to.freeY
         }
-        out[0] = to.sheet.left + lx
-        out[1] = to.sheet.top + ly
+        out[0] = to.ox + lx
+        out[1] = to.oy + ly
     }
 
     /** Index of the sheet nearest to a world point. */
@@ -192,15 +251,15 @@ object PdfNotebook {
     private fun cutAtPanelEdge(s: Stroke, slot: Slot): List<Pair<Stroke, Boolean>>? {
         val n = s.points.size / 2
         if (n < 2) return null
-        val ox = slot.sheet.left; val oy = slot.sheet.top
+        val ox = slot.ox; val oy = slot.oy
         fun inP(i: Int) = slot.inPanel(s.points[2 * i] - ox, s.points[2 * i + 1] - oy)
         val first = inP(0)
         if ((1 until n).none { inP(it) != first }) return null
 
         val pr = if (s.hasPressure()) s.pressures else null
         val out = ArrayList<Pair<Stroke, Boolean>>()
-        var pts = ArrayList<Float>()
-        var prs: ArrayList<Float>? = if (pr != null) ArrayList() else null
+        var pts = FloatList()
+        var prs: FloatList? = if (pr != null) FloatList() else null
         var part = first
         fun add(x: Float, y: Float, p: Float) { pts.add(x); pts.add(y); prs?.add(p) }
         fun flush() {
@@ -226,7 +285,7 @@ object PdfNotebook {
                 val xb = x0 + (x1 - x0) * t; val yb = y0 + (y1 - y0) * t; val pb = p0 + (p1 - p0) * t
                 add(xb, yb, pb)
                 flush()
-                pts = ArrayList(); prs = if (pr != null) ArrayList() else null
+                pts = FloatList(); prs = if (pr != null) FloatList() else null
                 part = now
                 add(xb, yb, pb)
             }
@@ -266,8 +325,7 @@ object PdfNotebook {
             }
             val pieces = cutAtPanelEdge(s, a)
             if (pieces == null) {
-                val ox = a.sheet.left; val oy = a.sheet.top
-                val panel = a.inPanel(s.points[0] - ox, s.points[1] - oy)
+                val panel = a.inPanel(s.points[0] - a.ox, s.points[1] - a.oy)
                 s.mapPoints { x, y, o -> mapPoint(a, b, x, y, o, panel) }
                 k++
             } else {
@@ -302,6 +360,8 @@ object PdfNotebook {
             put("w", s.srcW.toDouble()); put("h", s.srcH.toDouble())
             put("fw", s.freeW.toDouble()); put("fh", s.freeH.toDouble())
             put("s", rectJson(s.sheet)); put("p", rectJson(s.pdf))
+            put("pad", s.pad.toDouble())
+            put("pg", s.page)
         })
         val root = JSONObject().apply {
             put("version", LAYOUT_VERSION)
@@ -328,11 +388,13 @@ object PdfNotebook {
     fun loadSlots(f: File): List<Slot>? = runCatching {
         if (!f.isFile) return null
         val root = JSONObject(f.readText())
-        if (root.optInt("version", 1) < LAYOUT_VERSION) {
-            // still an old file (upgrade failed): show it with default panels
+        val version = root.optInt("version", 1)
+        if (version < 2) {
+            // still a v1 file (upgrade failed): show it with default panels
             val sizes = legacyPages(root).map { it.srcW to it.srcH }
-            return layout(defaultSpecs(sizes), defaultSide(sizes))
+            return layout(defaultSpecs(sizes), defaultSide(sizes), 0f)
         }
+        // v2 files had no padding; v3 stores it per page
         val side = root.optBoolean("side", true)
         val arr = root.getJSONArray("pages")
         val out = ArrayList<Slot>(arr.length())
@@ -341,7 +403,9 @@ object PdfNotebook {
             out.add(Slot(
                 i, jsonRect(o.getJSONArray("s")), jsonRect(o.getJSONArray("p")),
                 o.optDouble("w", 595.0).toFloat(), o.optDouble("h", 842.0).toFloat(),
-                o.getDouble("fw").toFloat(), o.getDouble("fh").toFloat(), side
+                o.getDouble("fw").toFloat(), o.getDouble("fh").toFloat(), side,
+                if (version >= 3) o.optDouble("pad", PAD.toDouble()).toFloat() else 0f,
+                o.optInt("pg", i).let { if (it < 0) BLANK else it }
             ))
         }
         out.takeIf { it.isNotEmpty() }
@@ -390,17 +454,25 @@ object PdfNotebook {
     }
 
     /**
-     * Converts a notebook saved by the previous version (layout v1, possibly
-     * "rotated" sideways) to the current layout, moving its ink so everything
-     * lands back on the upright PDF / in the notes panel. Runs once, on a
-     * background thread, before the notebook is opened or exported.
+     * Converts a notebook saved by an older version to the current layout,
+     * moving its ink so everything lands back on the upright PDF / in the notes
+     * panel. Runs once, on a background thread, before the notebook is opened
+     * or exported.
+     *
+     *   v2 -> v3: every sheet gains [PAD] free space on all four sides. Each
+     *             sheet's content simply shifts by its new offset; strokes are
+     *             moved whole (never cut), so nothing changes shape.
+     *   v1 -> v3: the original conversion (undo sideways turns, re-panel),
+     *             laid out straight into the padded sheets.
      */
     fun upgradeIfNeeded(ctx: Context, id: String) {
         runCatching {
             val f = layoutFile(ctx, id)
             if (!f.isFile) return
             val root = JSONObject(f.readText())
-            if (root.optInt("version", 1) >= LAYOUT_VERSION) return
+            val version = root.optInt("version", 1)
+            if (version >= LAYOUT_VERSION) return
+            if (version == 2) { upgradeV2(ctx, id, f); return }
             val legacy = legacyPages(root)
             if (legacy.isEmpty()) return
             val sizes = legacy.map { it.srcW to it.srcH }
@@ -441,15 +513,34 @@ object PdfNotebook {
                 )
             }
 
-            // 2) v1 sheets -> v2 sheets, keeping each page's own panel size
+            // 2) v1 sheets -> padded v3 sheets, keeping each page's own panel size
             val specs = v1.map { PageSpec(it.srcW, it.srcH, it.freeW, it.freeH) }
-            val v2 = layout(specs, defaultSide(sizes))
-            remap(v1, v2, strokes, texts, images)
+            val v3 = layout(specs, defaultSide(sizes))
+            remap(v1, v3, strokes, texts, images)
 
-            NoteStore.save(ctx, id, bounds(v2), strokes)
+            NoteStore.save(ctx, id, bounds(v3), strokes)
             NoteStore.saveObjectsNow(ctx, id, texts, images)
-            saveLayout(ctx, id, v2)
+            saveLayout(ctx, id, v3)
         }
+    }
+
+    /** v2 (no padding) -> v3 (padded sheets): a pure per-sheet shift. */
+    private fun upgradeV2(ctx: Context, id: String, f: File) {
+        val old = loadSlots(f) ?: return
+        val data = NoteStore.load(ctx, id) ?: return
+        val objs = NoteStore.loadObjects(ctx, id)
+        val strokes = data.second
+        val texts = objs.first
+        val images = objs.second
+        val padded = layout(specsOf(old), isLandscape(old), PAD)
+        remap(old, padded, strokes, texts, images, map = { a, b, x, y, o ->
+            o[0] = x - a.ox + b.ox
+            o[1] = y - a.oy + b.oy
+        })
+        // The layout is written last: it is what marks the notebook as v3.
+        NoteStore.save(ctx, id, bounds(padded), strokes)
+        NoteStore.saveObjectsNow(ctx, id, texts, images)
+        saveLayout(ctx, id, padded)
     }
 
     // =====================================================================
@@ -577,12 +668,15 @@ object PdfNotebook {
 
         fill.color = if (outDark) Color.BLACK else Color.WHITE
         canvas.drawRect(sheet, fill)
-        fill.color = Color.WHITE
-        canvas.drawRect(slot.pdf, fill)
-        if (pdfBmp != null) {
+        val hasPaper = !slot.isBlank
+        if (hasPaper) {
+            fill.color = Color.WHITE
+            canvas.drawRect(slot.pdf, fill)
+        }
+        if (pdfBmp != null && hasPaper) {
             drawPdfBitmap(canvas, pdfBmp, slot, Paint(Paint.FILTER_BITMAP_FLAG or Paint.ANTI_ALIAS_FLAG))
         }
-        if (!outDark) {
+        if (!outDark && hasPaper) {
             // white PDF on white paper: a hairline keeps the page edge visible
             val edge = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                 style = Paint.Style.STROKE; color = 0xFFCFCFCF.toInt(); strokeWidth = 3f
@@ -600,8 +694,9 @@ object PdfNotebook {
 
         val layer = canvas.saveLayer(sheet, null)
         val themed: (Int) -> Int = { c -> if (flip) swapBW(c) else c }
-        if (!outDark) {
-            // light output: paper colours == canvas colours, one pass
+        if (!outDark || !hasPaper) {
+            // light output (paper colours == canvas colours) or a blank page
+            // (no PDF paper at all): one pass
             drawInk(canvas, strokes, sheet, paint, themed)
         } else {
             canvas.save()
@@ -668,10 +763,10 @@ object PdfNotebook {
         val bw = max(1, (slot.sheet.width() * scale).roundToInt())
         val bh = max(1, (slot.sheet.height() * scale).roundToInt())
         val out = Bitmap.createBitmap(bw, bh, Bitmap.Config.ARGB_8888)
-        val pdfBmp = renderer?.let {
+        val pdfBmp = renderer?.takeIf { !slot.isBlank }?.let {
             runCatching {
                 val (pw, ph) = uprightSize(slot, scale)
-                renderPage(it, slot.index, pw, ph)
+                renderPage(it, slot.page, pw, ph)
             }.getOrNull()
         }
         drawSheet(Canvas(out), slot, pdfBmp, strokes, texts, images, outDark, inkDark, scale)
@@ -753,11 +848,11 @@ object PdfNotebook {
                 val pw = max(1, (slot.sheet.width() * scale).roundToInt())
                 val ph = max(1, (slot.sheet.height() * scale).roundToInt())
                 val page = doc.startPage(PdfDocument.PageInfo.Builder(pw, ph, slot.index + 1).create())
-                val pdfBmp = renderer?.let {
+                val pdfBmp = renderer?.takeIf { !slot.isBlank }?.let {
                     val pxScale = PDF_EMBED_LONG / max(slot.pdf.width(), slot.pdf.height())
                     runCatching {
                         val (pw, ph) = uprightSize(slot, pxScale)
-                        renderPage(it, slot.index, pw, ph)
+                        renderPage(it, slot.page, pw, ph)
                     }.getOrNull()
                 }
                 drawSheet(page.canvas, slot, pdfBmp, strokes, texts, images, outDark, inkDark, scale)
@@ -807,10 +902,18 @@ class PdfPageCache(private val file: File, private val onReady: () -> Unit) {
     private var inFlight = -1L
     private val failedKeys = HashSet<Long>()          // e.g. OOM on the top tier: don't retry forever
 
+    // Bounded more tightly than before (was up to 192 MB): one top-tier page
+    // is ~25 MB, so this still holds the pages around the screen at full
+    // sharpness without letting RAM climb while scrolling a long PDF.
     private val cache = object : LruCache<Long, Bitmap>(
-        min(Runtime.getRuntime().maxMemory() / 4, 192L * 1024 * 1024).toInt()
+        min(Runtime.getRuntime().maxMemory() / 5, 128L * 1024 * 1024).toInt()
     ) {
         override fun sizeOf(key: Long, value: Bitmap) = value.allocationByteCount
+    }
+
+    /** Drop cached pages under memory pressure (they re-render on demand). */
+    fun trim(all: Boolean) {
+        if (all) cache.evictAll() else cache.trimToSize(cache.maxSize() / 2)
     }
 
     private fun key(page: Int, tier: Int) = page.toLong() * 8 + tier
