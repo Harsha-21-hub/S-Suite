@@ -1,0 +1,113 @@
+rules_version = '2';
+
+// S Log security rules.
+// - Registration PIN: an account can only use the database after it has entered the PIN that is
+//   stored in the database itself at config/registration -> pin. The PIN is NOT in the app/web
+//   code, so publishing the code on GitHub doesn't reveal it. Nobody can read config/*.
+//   Changing the PIN there makes everyone enter the new PIN once.
+// - A log is visible to everyone whose email is in its memberEmails list.
+// - Only the owner can delete a log. Everyone can only write their own ticks (records).
+// - startDate / timesLog keep a log's history (first day, earlier times) so changes never
+//   rewrite past days.
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function authed() {
+      return request.auth != null && request.auth.token.email != null;
+    }
+    function myEmail() {
+      return request.auth.token.email.lower();
+    }
+    function registrationPin() {
+      return string(get(/databases/$(database)/documents/config/registration).data.pin);
+    }
+    // Signed in AND registered with the current PIN
+    function signedIn() {
+      return authed()
+        && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('pin', '') == registrationPin();
+    }
+    function logData(logId) {
+      return get(/databases/$(database)/documents/logs/$(logId)).data;
+    }
+    function isMemberOf(logId) {
+      return signedIn() && myEmail() in logData(logId).memberEmails;
+    }
+
+    // Holds the registration PIN. Set it in the Firebase console; apps can never read or change it.
+    match /config/{docId} {
+      allow read, write: if false;
+    }
+
+    // One entry per account: uid, email, name, pin, createdAt, lastLoginAt
+    function validProfile(uid) {
+      return authed()
+        && request.auth.uid == uid
+        && request.resource.data.uid == uid
+        && request.resource.data.email == myEmail()
+        && request.resource.data.name is string
+        && request.resource.data.name.size() <= 100;
+    }
+    match /users/{uid} {
+      allow read: if authed() && request.auth.uid == uid;
+      // registering requires the correct PIN
+      allow create: if validProfile(uid)
+        && request.resource.data.get('pin', '') == registrationPin();
+      // later updates (name, last login) keep the PIN; changing it requires the correct one
+      allow update: if validProfile(uid)
+        && (request.resource.data.get('pin', '') == resource.data.get('pin', '')
+            || request.resource.data.get('pin', '') == registrationPin());
+      // "Delete account" removes your own entry
+      allow delete: if authed() && request.auth.uid == uid;
+    }
+
+    match /logs/{logId} {
+      allow read: if signedIn() && myEmail() in resource.data.memberEmails;
+
+      allow create: if signedIn()
+        && request.resource.data.ownerUid == request.auth.uid
+        && request.resource.data.ownerEmail == myEmail()
+        && request.resource.data.memberEmails == [myEmail()]
+        && request.resource.data.name is string
+        && request.resource.data.name.size() > 0
+        && request.resource.data.name.size() <= 100
+        && request.resource.data.times is list
+        && request.resource.data.times.size() <= 48
+        && request.resource.data.get('timesLog', {}).size() <= 1000;
+
+      allow update: if signedIn()
+        && myEmail() in resource.data.memberEmails
+        && request.resource.data.ownerUid == resource.data.ownerUid
+        && request.resource.data.ownerEmail == resource.data.ownerEmail
+        && request.resource.data.ownerEmail in request.resource.data.memberEmails
+        && request.resource.data.memberEmails.size() <= 50
+        && request.resource.data.times.size() <= 48
+        && request.resource.data.get('timesLog', {}).size() <= 1000
+        && (
+          // owner may change anything (incl. who it's shared with)
+          request.auth.uid == resource.data.ownerUid
+          // members may edit, but not change who it's shared with...
+          || request.resource.data.memberEmails == resource.data.memberEmails
+          // ...except removing themselves (leaving)
+          || request.resource.data.memberEmails == resource.data.memberEmails.removeAll([myEmail()])
+        );
+
+      allow delete: if signedIn() && request.auth.uid == resource.data.ownerUid;
+
+      match /records/{recordId} {
+        allow read: if isMemberOf(logId);
+
+        allow create, update: if isMemberOf(logId)
+          && request.resource.data.uid == request.auth.uid
+          && recordId == request.resource.data.date + '_' + request.auth.uid
+          && request.resource.data.checked is list
+          && request.resource.data.checked.size() <= 48;
+
+        // your own ticks, or the owner cleaning up when deleting the log
+        allow delete: if signedIn() && (
+          resource.data.uid == request.auth.uid
+          || logData(logId).ownerUid == request.auth.uid
+        );
+      }
+    }
+  }
+}

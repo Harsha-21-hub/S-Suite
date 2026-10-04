@@ -1,0 +1,41 @@
+# ---------------------------------------------------------------- Android / Gradle
+.gradle/
+.kotlin/
+build/
+**/build/
+captures/
+.externalNativeBuild/
+.cxx/
+local.properties
+*.apk
+*.aab
+# signed release output from Android Studio (Build -> Generate Signed App Bundle / APK)
+app/release/
+
+# ---------------------------------------------------------------- IDE
+.idea/
+*.iml
+.DS_Store
+Thumbs.db
+
+# ---------------------------------------------------------------- Secrets (never push these)
+# Release signing keys
+key_jks/
+*.jks
+*.keystore
+keystore.properties
+# Firebase config for the Android app (download it again from Firebase -> Project settings)
+app/google-services.json
+
+# ---------------------------------------------------------------- Firebase CLI / Vercel
+.firebase/
+.vercel/
+firebase-debug.log
+firestore-debug.log
+
+# ---------------------------------------------------------------- AI training (dataset + scripts are kept)
+ai/export/
+ai/.venv/
+ai/venv/
+ai/__pycache__/
+*.pyc

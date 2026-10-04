@@ -1,0 +1,24 @@
+{
+  "format": "slog",
+  "version": 1,
+  "app": "S Log",
+  "exportedAt": "2026-10-03T23:45:00+05:30",
+  "exportedBy": "Example",
+  "logs": [
+    {
+      "name": "Gym",
+      "times": ["07:00", "19:00"],
+      "active": true,
+      "history": {
+        "2026-10-01": ["07:00", "19:00"],
+        "2026-10-02": ["07:00"]
+      }
+    },
+    {
+      "name": "Read",
+      "times": ["21:30"],
+      "active": true,
+      "history": {}
+    }
+  ]
+}

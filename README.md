@@ -60,6 +60,32 @@ A lightweight battery monitoring and smart charging app focused on local battery
 
 ---
 
+### 📋 S Log
+
+A habit and daily-log tracker with exact reminders, on-device AI messages, history-safe streaks and live sync between Android and the web.
+
+**Highlights**
+- Logs with multiple daily times and per-time ticks
+- Max, Monthly and Current streaks (partly done days count)
+- History-safe: adding logs or times never changes earlier days
+- Animated milestone popups (3, 10, 50, 100 ... 365 days)
+- Exact reminders with Zomato-style, Gen Z AI messages generated on the device
+- Congrats notification when a task is done before its reminder
+- Daily summary of what's left
+- Calendar with week / month views
+- Share logs as `.csv` / `.slog` files and import with preview
+- Live sync between phone and laptop, works offline
+- Web version for laptops
+- Nothing-style dot-matrix design
+
+**Requirements**
+- Android 8.0 or newer
+- A Firebase project (free Spark plan) for accounts and sync, see `SLog/SETUP.md`
+
+[Open S Log](./SLog)
+
+---
+
 ### 🎬 S-MediaReconstruct
 
 A lightweight Windows media reconstruction and normalization tool designed to rebuild fragmented video and audio into a continuous, playable media file.
@@ -101,6 +127,7 @@ Each app has its own GitHub release so the apps can be updated independently.
 
 - **S Notes** — download the latest APK from the S Notes release.
 - **S Charge** — download the latest APK from the S Charge release.
+- **S Log** — download the latest APK from the S Log release.
 - **S-MediaReconstruct** — download the latest Windows executable from the S-MediaReconstruct release.
 
 See the repository's **Releases** section for the latest versions.
@@ -113,6 +140,8 @@ S-Suite is designed with a local-first approach.
 
 The applications do not require a cloud account for their core functionality, and normal app data is kept on the device.
 
+The exception is **S Log**, which syncs logs between devices: it uses an account and stores logs in your own Firebase project, protected by database rules and a registration PIN. It still works offline.
+
 ---
 
 ## 🛠️ Repository Structure
@@ -121,9 +150,10 @@ The applications do not require a cloud account for their core functionality, an
 S-Suite/
 ├── SNotes/
 ├── SCharge/
+├── SLog/
 └── SMediaReconstruct/
 
-Each application is maintained as a separate Android project with its own source code, resources, Gradle configuration and release cycle.
+Each application is maintained as a separate project with its own source code, resources, build configuration and release cycle.
 
 ## 📄 License
 

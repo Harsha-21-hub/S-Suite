@@ -1,0 +1,16 @@
+# S-Suite: secrets that must never be pushed (applies to every app folder)
+**/key_jks/
+*.jks
+*.keystore
+keystore.properties
+**/google-services.json
+
+# Common build / IDE leftovers
+**/.gradle/
+**/.kotlin/
+**/build/
+**/local.properties
+**/.idea/
+*.iml
+.DS_Store
+Thumbs.db

@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector android:height="108.0dip" android:width="108.0dip" android:viewportWidth="108.0" android:viewportHeight="108.0"
+  xmlns:android="http://schemas.android.com/apk/res/android">
+    <group android:pivotX="54.0" android:pivotY="54.0" android:scaleX="0.45" android:scaleY="0.45">
+        <group android:translateX="-2.0" android:translateY="-2.0">
+            <path android:fillColor="#00000000" android:pathData="M 20,4 h 72 a 10,10 0 0 1 10,10 v 84 a 10,10 0 0 1 -10,10 h -72 a 10,10 0 0 1 -10,-10 v -84 a 10,10 0 0 1 10,-10 z" android:strokeColor="#ff424242" android:strokeWidth="6.0" />
+            <path android:pathData="M 10,24 h 92" android:strokeColor="#ff424242" android:strokeWidth="6.0" />
+            <path android:pathData="M 24,14 h 16" android:strokeColor="#ffffffff" android:strokeWidth="5.0" android:strokeLineCap="round" />
+            <path android:pathData="M 86,14 v 0.01" android:strokeColor="#ffea1537" android:strokeWidth="12.0" android:strokeLineCap="round" />
+            <path android:pathData="                     M 28,86 v 0.01 M 34,86 v 0.01 M 40,86 v 0.01 M 46,86 v 0.01 M 52,86 v 0.01 M 58,86 v 0.01 M 64,86 v 0.01 M 70,86 v 0.01 M 76,86 v 0.01 M 82,86 v 0.01                     M 28,94 v 0.01 M 34,94 v 0.01 M 40,94 v 0.01 M 46,94 v 0.01 M 52,94 v 0.01 M 58,94 v 0.01 M 64,94 v 0.01 M 70,94 v 0.01 M 76,94 v 0.01 M 82,94 v 0.01" android:strokeColor="#ff666666" android:strokeWidth="3.5" android:strokeLineCap="round" />
+            <path android:pathData="                     M 52,38 v 0.01 M 56,38 v 0.01 M 60,38 v 0.01 M 64,38 v 0.01                     M 48,42 v 0.01 M 52,42 v 0.01 M 56,42 v 0.01 M 60,42 v 0.01 M 64,42 v 0.01 M 68,42 v 0.01                     M 44,46 v 0.01 M 48,46 v 0.01 M 52,46 v 0.01                     M 44,50 v 0.01 M 48,50 v 0.01 M 52,50 v 0.01 M 56,50 v 0.01                     M 48,54 v 0.01 M 52,54 v 0.01 M 56,54 v 0.01 M 60,54 v 0.01                     M 52,58 v 0.01 M 56,58 v 0.01 M 60,58 v 0.01 M 64,58 v 0.01                     M 56,62 v 0.01 M 60,62 v 0.01 M 64,62 v 0.01 M 68,62 v 0.01                     M 60,66 v 0.01 M 64,66 v 0.01 M 68,66 v 0.01                     M 44,70 v 0.01 M 48,70 v 0.01 M 52,70 v 0.01 M 56,70 v 0.01 M 60,70 v 0.01 M 64,70 v 0.01                     M 48,74 v 0.01 M 52,74 v 0.01 M 56,74 v 0.01 M 60,74 v 0.01" android:strokeColor="#ffffffff" android:strokeWidth="3.5" android:strokeLineCap="round" />
+        </group>
+    </group>
+</vector>
