@@ -1,0 +1,734 @@
+{
+ "hydration": {
+  "keywords": [
+   "water",
+   "drink",
+   "hydrat",
+   "bottle",
+   "h2o",
+   "glass of",
+   "litre",
+   "liter",
+   "2l",
+   "3l",
+   "coconut",
+   "electrolyte",
+   "paani",
+   "pani"
+  ],
+  "emoji": [
+   "💧",
+   "🥤",
+   "🚰"
+  ]
+ },
+ "meal": {
+  "keywords": [
+   "eat",
+   "meal",
+   "food",
+   "lunch",
+   "dinner",
+   "breakfast",
+   "protein",
+   "fruit",
+   "snack",
+   "calorie",
+   "cook",
+   "nutrition",
+   "salad",
+   "brunch",
+   "veggies",
+   "vegetable",
+   "khana",
+   "nashta",
+   "tiffin"
+  ],
+  "emoji": [
+   "🥗",
+   "🍲",
+   "🍳"
+  ]
+ },
+ "fasting": {
+  "keywords": [
+   "imd",
+   "if",
+   "intermittent",
+   "fasting",
+   "upvas",
+   "vrat",
+   "roza",
+   "fast",
+   "16:8",
+   "16/8",
+   "18:6",
+   "18/6",
+   "20:4",
+   "omad",
+   "eating window",
+   "diet",
+   "keto",
+   "low carb",
+   "deficit",
+   "calorie deficit",
+   "no sugar diet",
+   "no snacking",
+   "detox diet"
+  ],
+  "emoji": [
+   "🥑",
+   "🍵",
+   "🕐"
+  ]
+ },
+ "workout": {
+  "keywords": [
+   "gym",
+   "workout",
+   "exercise",
+   "lift",
+   "weights",
+   "push",
+   "pull",
+   "leg day",
+   "chest",
+   "pushup",
+   "push up",
+   "squat",
+   "plank",
+   "abs",
+   "cardio",
+   "hiit",
+   "strength",
+   "training",
+   "dumbbell",
+   "pullup",
+   "crossfit",
+   "calisthenics"
+  ],
+  "emoji": [
+   "💪",
+   "🔥",
+   "🥇"
+  ]
+ },
+ "walking": {
+  "keywords": [
+   "walk",
+   "steps",
+   "stroll",
+   "10k",
+   "10000",
+   "evening walk",
+   "morning walk",
+   "hike",
+   "trek"
+  ],
+  "emoji": [
+   "🚶",
+   "👟",
+   "🌳"
+  ]
+ },
+ "running": {
+  "keywords": [
+   "run",
+   "running",
+   "jog",
+   "sprint",
+   "5k",
+   "marathon",
+   "km run",
+   "couch to"
+  ],
+  "emoji": [
+   "🏃",
+   "👟",
+   "💨"
+  ]
+ },
+ "sleep": {
+  "keywords": [
+   "sleep",
+   "bed",
+   "nap",
+   "rest",
+   "bedtime",
+   "lights off",
+   "early to bed",
+   "8 hours"
+  ],
+  "emoji": [
+   "😴",
+   "🌙",
+   "🛌"
+  ]
+ },
+ "stretching": {
+  "keywords": [
+   "stretch",
+   "yoga",
+   "asana",
+   "mobility",
+   "flexib",
+   "surya",
+   "posture",
+   "pilates"
+  ],
+  "emoji": [
+   "🧘",
+   "🤸"
+  ]
+ },
+ "meds": {
+  "keywords": [
+   "med",
+   "medicine",
+   "pill",
+   "tablet",
+   "vitamin",
+   "supplement",
+   "dose",
+   "insulin",
+   "capsule",
+   "multivitamin",
+   "omega",
+   "iron",
+   "b12",
+   "d3",
+   "inhaler",
+   "creatine",
+   "dawai"
+  ],
+  "emoji": [
+   "💊",
+   "⏰"
+  ]
+ },
+ "skincare": {
+  "keywords": [
+   "skin",
+   "skincare",
+   "sunscreen",
+   "spf",
+   "moistur",
+   "serum",
+   "face wash",
+   "facewash",
+   "glow",
+   "cream",
+   "hair",
+   "scalp",
+   "minoxidil",
+   "cleanse",
+   "retinol",
+   "toner"
+  ],
+  "emoji": [
+   "🧴",
+   "✨",
+   "🌸"
+  ]
+ },
+ "wake": {
+  "keywords": [
+   "wake",
+   "wake up",
+   "rise",
+   "alarm",
+   "early",
+   "5am",
+   "6am",
+   "morning routine",
+   "uthna"
+  ],
+  "emoji": [
+   "⏰",
+   "🌅",
+   "🐓"
+  ]
+ },
+ "hygiene": {
+  "keywords": [
+   "brush",
+   "floss",
+   "teeth",
+   "shower",
+   "bath",
+   "hygiene",
+   "nails",
+   "shave",
+   "groom",
+   "mouthwash"
+  ],
+  "emoji": [
+   "🪥",
+   "🧼",
+   "🦷"
+  ]
+ },
+ "meditation": {
+  "keywords": [
+   "meditat",
+   "breath",
+   "pranayam",
+   "mindful",
+   "calm",
+   "zen",
+   "box breath",
+   "breathwork",
+   "dhyan",
+   "anulom"
+  ],
+  "emoji": [
+   "🧘",
+   "🌿",
+   "🍃"
+  ]
+ },
+ "journaling": {
+  "keywords": [
+   "journal",
+   "diary",
+   "gratitude",
+   "reflect",
+   "write down",
+   "thankful",
+   "affirmation",
+   "morning pages"
+  ],
+  "emoji": [
+   "📓",
+   "📝",
+   "💭"
+  ]
+ },
+ "mood": {
+  "keywords": [
+   "mood",
+   "feeling",
+   "check in",
+   "check-in",
+   "emotion",
+   "mental health",
+   "self care",
+   "therapy",
+   "vent"
+  ],
+  "emoji": [
+   "🌈",
+   "💭",
+   "🫶"
+  ]
+ },
+ "nofap": {
+  "keywords": [
+   "nofap",
+   "no fap",
+   "n2",
+   "no nut",
+   "nonut",
+   "semen",
+   "retention",
+   "celibacy",
+   "masturbat",
+   "pmo",
+   "urge",
+   "self control",
+   "brahmachar"
+  ],
+  "emoji": [
+   "🧠",
+   "🔒",
+   "👑"
+  ]
+ },
+ "noporn": {
+  "keywords": [
+   "porn",
+   "no porn",
+   "noporn",
+   "adult content",
+   "nsfw",
+   "explicit"
+  ],
+  "emoji": [
+   "🚫",
+   "🌱",
+   "🧠"
+  ]
+ },
+ "quit": {
+  "keywords": [
+   "smok",
+   "cigarette",
+   "vape",
+   "alcohol",
+   "drinking",
+   "sugar",
+   "no sugar",
+   "quit",
+   "sober",
+   "nicotine",
+   "tobacco",
+   "caffeine",
+   "junk",
+   "soda",
+   "gutka"
+  ],
+  "emoji": [
+   "🚭",
+   "💚",
+   "🌿"
+  ]
+ },
+ "reading": {
+  "keywords": [
+   "read",
+   "book",
+   "novel",
+   "chapter",
+   "page",
+   "kindle",
+   "audiobook",
+   "story",
+   "comic",
+   "manga"
+  ],
+  "emoji": [
+   "📖",
+   "📚",
+   "🔖"
+  ]
+ },
+ "studying": {
+  "keywords": [
+   "study",
+   "studies",
+   "revision",
+   "revise",
+   "exam",
+   "notes",
+   "homework",
+   "assignment",
+   "lecture",
+   "class",
+   "semester",
+   "syllabus",
+   "test prep",
+   "gate",
+   "cat",
+   "upsc",
+   "jee",
+   "neet",
+   "sat",
+   "flashcard",
+   "lab record",
+   "mock",
+   "padhai"
+  ],
+  "emoji": [
+   "📚",
+   "🎓",
+   "📝"
+  ]
+ },
+ "coding": {
+  "keywords": [
+   "code",
+   "coding",
+   "leetcode",
+   "dsa",
+   "program",
+   "dev",
+   "github",
+   "commit",
+   "debug",
+   "project",
+   "algorithm",
+   "algo",
+   "hackerrank",
+   "codeforces",
+   "build",
+   "app",
+   "python",
+   "java",
+   "kotlin",
+   "web"
+  ],
+  "emoji": [
+   "💻",
+   "🐛",
+   "🚀"
+  ]
+ },
+ "focus": {
+  "keywords": [
+   "focus",
+   "deep work",
+   "pomodoro",
+   "work",
+   "office",
+   "task",
+   "todo",
+   "to do",
+   "plan",
+   "planning",
+   "productiv",
+   "email",
+   "inbox",
+   "meeting",
+   "schedule",
+   "agenda"
+  ],
+  "emoji": [
+   "🎯",
+   "⏳",
+   "🔕"
+  ]
+ },
+ "practice": {
+  "keywords": [
+   "practice",
+   "guitar",
+   "piano",
+   "sing",
+   "music",
+   "language",
+   "duolingo",
+   "spanish",
+   "french",
+   "german",
+   "japanese",
+   "korean",
+   "english",
+   "vocab",
+   "speaking",
+   "instrument",
+   "violin",
+   "drums",
+   "flute",
+   "chess",
+   "typing",
+   "dance",
+   "ukulele",
+   "riyaz"
+  ],
+  "emoji": [
+   "🎵",
+   "🎸",
+   "🌍"
+  ]
+ },
+ "chores": {
+  "keywords": [
+   "clean",
+   "laundry",
+   "dishes",
+   "tidy",
+   "chore",
+   "declutter",
+   "sweep",
+   "mop",
+   "room",
+   "make bed",
+   "kitchen",
+   "grocer",
+   "trash",
+   "iron clothes",
+   "organize",
+   "vacuum",
+   "safai"
+  ],
+  "emoji": [
+   "🧹",
+   "🧺",
+   "🧽"
+  ]
+ },
+ "finance": {
+  "keywords": [
+   "budget",
+   "money",
+   "saving",
+   "save",
+   "expense",
+   "spend",
+   "finance",
+   "invest",
+   "sip",
+   "bill",
+   "track spending",
+   "accounts",
+   "emi",
+   "rent",
+   "stock",
+   "upi",
+   "crypto"
+  ],
+  "emoji": [
+   "💰",
+   "📈",
+   "💸"
+  ]
+ },
+ "social": {
+  "keywords": [
+   "call",
+   "family",
+   "friend",
+   "mom",
+   "dad",
+   "mum",
+   "parents",
+   "text",
+   "connect",
+   "social",
+   "network",
+   "grandma",
+   "grandpa",
+   "message",
+   "maa",
+   "papa",
+   "nani",
+   "dadi",
+   "girlfriend",
+   "boyfriend",
+   "wife",
+   "husband",
+   "date night"
+  ],
+  "emoji": [
+   "📞",
+   "🤝",
+   "💬"
+  ]
+ },
+ "creative": {
+  "keywords": [
+   "draw",
+   "sketch",
+   "paint",
+   "art",
+   "write",
+   "writing",
+   "blog",
+   "poem",
+   "design",
+   "photo",
+   "video",
+   "edit",
+   "content",
+   "craft",
+   "hobby",
+   "create",
+   "doodle",
+   "story writing",
+   "youtube",
+   "podcast"
+  ],
+  "emoji": [
+   "🎨",
+   "💡",
+   "🎬"
+  ]
+ },
+ "pets": {
+  "keywords": [
+   "dog",
+   "cat",
+   "pet",
+   "puppy",
+   "kitten",
+   "feed",
+   "litter",
+   "vet",
+   "fish",
+   "bird",
+   "walk the dog"
+  ],
+  "emoji": [
+   "🐶",
+   "🐱",
+   "🐾"
+  ]
+ },
+ "plants": {
+  "keywords": [
+   "plant",
+   "garden",
+   "water plants",
+   "seed",
+   "succulent",
+   "balcony",
+   "flower",
+   "repot",
+   "tulsi"
+  ],
+  "emoji": [
+   "🌱",
+   "🪴",
+   "💦"
+  ]
+ },
+ "screen_break": {
+  "keywords": [
+   "screen",
+   "detox",
+   "phone",
+   "social media",
+   "instagram",
+   "reels",
+   "tiktok",
+   "shorts",
+   "offline",
+   "unplug",
+   "eye break",
+   "20-20-20",
+   "digital",
+   "no phone",
+   "doomscroll"
+  ],
+  "emoji": [
+   "📵",
+   "👀",
+   "🔌"
+  ]
+ },
+ "prayer": {
+  "keywords": [
+   "pray",
+   "prayer",
+   "pooja",
+   "puja",
+   "namaz",
+   "salah",
+   "chant",
+   "jaap",
+   "aarti",
+   "temple",
+   "church",
+   "gurbani",
+   "bible",
+   "quran",
+   "gita",
+   "spiritual",
+   "mantra",
+   "worship"
+  ],
+  "emoji": [
+   "🙏",
+   "🪔",
+   "🕊"
+  ]
+ },
+ "other": {
+  "keywords": [],
+  "emoji": [
+   "✅",
+   "⭐",
+   "🙌"
+  ]
+ }
+}

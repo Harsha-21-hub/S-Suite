@@ -1,0 +1,7 @@
+# Python 3.10, 3.11 or 3.12 (tested on 3.10 and 3.11).
+# TensorFlow 2.16 on purpose: the app's TFLite runtime is 2.16.1, and models converted with a newer
+# TensorFlow can fail to load on the phone ("Didn't find op ... version").
+# Keras 3.12.4 = newest Keras that still supports Python 3.10.
+tensorflow==2.16.2
+keras==3.12.4
+# GPU (RTX 4060) inside WSL2 / Linux instead:  pip install "tensorflow[and-cuda]==2.16.2" keras==3.12.4
