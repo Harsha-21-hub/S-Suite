@@ -172,12 +172,22 @@ object FirebaseRepo {
         val user = currentUser ?: return
         val email = user.email ?: return
         user.reauthenticate(EmailAuthProvider.getCredential(email, password)).await()
-        fetchLogs(emailOf(user)).forEach { deleteOrLeave(it, user) }
-        db.waitForPendingWrites().await() // make sure the deletes reach the server before the login goes
-        users().document(user.uid).delete().await()
-        user.delete().await()
+        deletingAccount = true
+        try {
+            fetchLogs(emailOf(user)).forEach { deleteOrLeave(it, user) }
+            db.waitForPendingWrites().await() // make sure the deletes reach the server before the login goes
+            // removing users/{uid} logs out every other device at once (see listenProfile)
+            users().document(user.uid).delete().await()
+            user.delete().await()
+        } finally {
+            deletingAccount = false
+        }
         auth.signOut() // make sure the login screen comes back
     }
+
+    /** True while THIS device deletes the account (its own user entry going away is expected then). */
+    @Volatile
+    private var deletingAccount = false
 
     // ------------------------------------------------------------- Listeners
 
@@ -314,7 +324,11 @@ object FirebaseRepo {
     }
 
     /** The user's own entry (users/{uid}): saved best whole-day streak + celebrated milestone. */
-    /** [onGone]: my user entry vanished on the server or can't be read (account deleted elsewhere?). */
+    /**
+     * My user entry -> saved best whole-day streak + highest celebrated milestone.
+     * When "Delete account" removes the entry on any device, the server tells every other device
+     * at once and they sign out (login screen). [onGone]: the entry can't be read (check the account).
+     */
     fun listenProfile(
         uid: String,
         onGone: () -> Unit = {},
@@ -323,7 +337,11 @@ object FirebaseRepo {
         users().document(uid).addSnapshotListener { snap, error ->
             if (error != null) { onGone(); return@addSnapshotListener }
             if (snap == null) return@addSnapshotListener
-            if (!snap.exists() && !snap.metadata.isFromCache) { onGone(); return@addSnapshotListener }
+            if (!snap.exists() && !snap.metadata.isFromCache) {
+                // "Delete account" (on any device) removed the entry: log out here too -> login screen
+                if (!deletingAccount) auth.signOut()
+                return@addSnapshotListener
+            }
             onChange(
                 (snap.get("bestDayStreak") as? Number)?.toInt() ?: 0,
                 (snap.get("celebratedDay") as? Number)?.toInt()

@@ -270,29 +270,46 @@ export function saveDayBest(best) {
     .catch(() => {});
 }
 
+// True while THIS tab deletes the account (its own user entry going away is expected then).
+let deletingAccount = false;
+
 /**
  * My user entry -> saved best whole-day streak + highest celebrated milestone (null = never).
- * onGone: the entry vanished on the server or can't be read (account deleted elsewhere?).
+ * Every signed-in device listens to it. When "Delete account" removes it (on any device), the
+ * server tells every other device at once and they sign out -> login screen.
+ * Read error -> asks the auth server whether the account still exists.
  */
-export function listenProfile(uid, cb, onGone = () => {}) {
+export function listenProfile(uid, cb) {
   return onSnapshot(doc(db, "users", uid), (snap) => {
-    if (!snap.exists() && !snap.metadata.fromCache) { onGone(); return; }
+    if (!snap.exists() && !snap.metadata.fromCache) {
+      if (!deletingAccount) fbSignOut(auth).catch(() => {}); // account deleted -> log out here too
+      return;
+    }
     const x = snap.exists() ? snap.data() : {};
     cb(x.bestDayStreak || 0, typeof x.celebratedDay === "number" ? x.celebratedDay : null);
-  }, () => onGone());
+  }, () => { checkAccount(); });
 }
 
-/** Deletes the account for good: my logs + ticks, leaves shared logs, my user entry, the login. */
+/**
+ * Deletes the account for good: my logs + ticks, leaves shared logs, my user entry (users/{uid}),
+ * then the login itself. Order matters: the database only allows the deletes while the entry
+ * exists. Removing the entry logs out every other device right away (see listenProfile).
+ */
 export async function deleteAccount(password) {
   const u = auth.currentUser;
   if (!u) return;
   await reauthenticateWithCredential(u, EmailAuthProvider.credential(u.email, password));
-  const snap = await getDocs(query(collection(db, "logs"), where("memberEmails", "array-contains", emailOf(u))));
-  const me = { uid: u.uid, email: emailOf(u), name: nameOf(u) };
-  for (const d of snap.docs) await deleteOrLeave({ id: d.id, ...d.data() }, me);
-  await waitForPendingWrites(db);
-  await deleteDoc(doc(db, "users", u.uid));
-  await deleteUser(u);
+  deletingAccount = true;
+  try {
+    const snap = await getDocs(query(collection(db, "logs"), where("memberEmails", "array-contains", emailOf(u))));
+    const me = { uid: u.uid, email: emailOf(u), name: nameOf(u) };
+    for (const d of snap.docs) await deleteOrLeave({ id: d.id, ...d.data() }, me);
+    await waitForPendingWrites(db);
+    await deleteDoc(doc(db, "users", u.uid)); // resolves once the server has removed it
+    await deleteUser(u);
+  } finally {
+    deletingAccount = false;
+  }
   // deleteUser signs out by itself; make sure, so the login screen always comes back
   try { await fbSignOut(auth); } catch {}
 }

@@ -244,7 +244,7 @@ function startMain(user) {
     S.celebratedDay = celebrated;
     S.storedDayBest = best;
     renderMain();
-  }, () => api.checkAccount()); // user entry gone: account deleted elsewhere? -> login screen
+  }); // account deleted on another device -> the listener logs out here -> login screen
   api.checkAccount();
   S.unsubLogs = api.listenLogs(user.email, (logs) => {
     S.logs = logs.sort((a, b) => orderOf(a) - orderOf(b) || a.createdAt - b.createdAt);
