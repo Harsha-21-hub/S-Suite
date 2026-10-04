@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Document with a folded corner and a red "PDF" band, matches ic_folder_open_white. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="17dp"
+    android:height="17dp"
+    android:viewportWidth="32"
+    android:viewportHeight="32">
+    <path
+        android:fillColor="@color/pure_white"
+        android:pathData="M8,2H20L27,9V27C27,28.7 25.7,30 24,30H8C6.3,30 5,28.7 5,27V5C5,3.3 6.3,2 8,2Z" />
+    <path
+        android:fillColor="@color/nothing_red"
+        android:pathData="M20,2V7C20,8.1 20.9,9 22,9H27Z" />
+    <path
+        android:fillColor="@color/nothing_red"
+        android:pathData="M2,14H30V23H2Z" />
+    <path
+        android:fillColor="@color/pure_white"
+        android:pathData="M5,16H8.2C9.5,16 10.3,16.8 10.3,17.9C10.3,19 9.5,19.8 8.2,19.8H6.6V21.5H5ZM6.6,17.3V18.5H8C8.5,18.5 8.7,18.3 8.7,17.9C8.7,17.5 8.5,17.3 8,17.3Z M11.6,16H13.9C15.8,16 17,17.1 17,18.75C17,20.4 15.8,21.5 13.9,21.5H11.6ZM13.2,17.3V20.2H13.8C14.8,20.2 15.4,19.7 15.4,18.75C15.4,17.8 14.8,17.3 13.8,17.3Z M18.3,16H22.6V17.3H19.9V18.2H22.3V19.5H19.9V21.5H18.3Z" />
+</vector>

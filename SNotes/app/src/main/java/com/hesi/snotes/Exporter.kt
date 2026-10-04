@@ -131,7 +131,7 @@ object Exporter {
     }
 
     /** Requirement C4 - object layer under the ink in exports (world coords). */
-    private fun drawObjectsWorld(
+    internal fun drawObjectsWorld(
         canvas: Canvas, texts: List<TextObject>, images: List<ImageObject>, flip: Boolean
     ) {
         if (images.isNotEmpty()) {
@@ -363,6 +363,30 @@ object Exporter {
             Toast.makeText(ctx, "Share failed", Toast.LENGTH_SHORT).show()
         }
     }
+
+    /** Shares already-written files (any mix of pages / notes) in one chooser. */
+    fun shareFiles(ctx: Context, files: List<File>, mime: String, title: String = "Share note") {
+        if (files.isEmpty()) return
+        try {
+            val uris = ArrayList<Uri>(files.size)
+            for (f in files) uris.add(FileProvider.getUriForFile(ctx, "com.hesi.snotes.fileprovider", f))
+            val intent = if (uris.size == 1) {
+                Intent(Intent.ACTION_SEND).apply { type = mime; putExtra(Intent.EXTRA_STREAM, uris[0]) }
+            } else {
+                Intent(Intent.ACTION_SEND_MULTIPLE).apply {
+                    type = mime; putParcelableArrayListExtra(Intent.EXTRA_STREAM, uris)
+                }
+            }
+            intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            ctx.startActivity(Intent.createChooser(intent, title))
+        } catch (e: Exception) {
+            Toast.makeText(ctx, "Share failed", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    /** A fresh, empty cache/shared folder for an export. */
+    fun freshShareDir(ctx: Context): File =
+        File(ctx.cacheDir, "shared").apply { mkdirs(); listFiles()?.forEach { it.deleteRecursively() } }
 
     /** Saves every page as a PNG in Pictures/S Notes. */
     fun saveToGallery(ctx: Context, pages: List<Bitmap>, name: String) {

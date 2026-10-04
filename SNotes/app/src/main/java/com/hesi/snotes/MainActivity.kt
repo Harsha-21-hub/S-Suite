@@ -98,6 +98,7 @@ class MainActivity : AppCompatActivity(), DrawingView.Listener {
     private lateinit var btnUndo: ImageButton
     private lateinit var btnRedo: ImageButton
     private lateinit var btnReset: ImageButton
+    private lateinit var btnRotatePdf: ImageButton
     private lateinit var btnTheme: ImageButton
     private lateinit var btnShare: ImageButton
     private lateinit var btnHide: ImageButton
@@ -191,6 +192,7 @@ class MainActivity : AppCompatActivity(), DrawingView.Listener {
         btnUndo = findViewById(R.id.btnUndo)
         btnRedo = findViewById(R.id.btnRedo)
         btnReset = findViewById(R.id.btnReset)
+        btnRotatePdf = findViewById(R.id.btnRotatePdf)
         btnTheme = findViewById(R.id.btnTheme)
         btnShare = findViewById(R.id.btnShare)
         btnHide = findViewById(R.id.btnHide)
@@ -234,16 +236,28 @@ class MainActivity : AppCompatActivity(), DrawingView.Listener {
         // back to the view. `loaded` guards autosave so a quick open+close can
         // never overwrite the real note with an empty canvas.
         Thread {
+            // notebooks from the previous version are converted once, first
+            if (drawing.pageMode == NoteStore.PAGE_PDF) PdfNotebook.upgradeIfNeeded(this, noteId)
             val data = NoteStore.load(this, noteId)
             val objs = NoteStore.loadObjects(this, noteId)
+            // PDF notebook: one fixed canvas sheet per imported PDF page.
+            val pdfSlots = if (drawing.pageMode == NoteStore.PAGE_PDF && PdfNotebook.has(this, noteId))
+                PdfNotebook.loadSlots(this, noteId) else null
             runOnUiThread {
+                if (isFinishing || isDestroyed) return@runOnUiThread
                 data?.let { drawing.loadNote(it.first, it.second) }
+                if (pdfSlots != null) {
+                    drawing.setPdf(pdfSlots, PdfNotebook.pdfFile(this, noteId))
+                    btnRotatePdf.visibility = View.VISIBLE   // PDF notebooks only
+                }
                 drawing.setObjects(objs.first, objs.second)
                 if (dark) drawing.setDarkTheme(true)
                 drawing.restoreViewport(
                     prefs.getFloat("view_${noteId}_pan_x", Float.NaN),
                     prefs.getFloat("view_${noteId}_pan_y", Float.NaN),
-                    prefs.getFloat("view_${noteId}_zoom", Float.NaN)
+                    prefs.getFloat("view_${noteId}_zoom", Float.NaN),
+                    prefs.getFloat("view_${noteId}_w", Float.NaN),
+                    prefs.getFloat("view_${noteId}_h", Float.NaN)
                 )
                 loaded = true
             }
@@ -267,6 +281,7 @@ class MainActivity : AppCompatActivity(), DrawingView.Listener {
     }
 
     override fun onDestroy() {
+        if (::drawing.isInitialized) drawing.releasePdf()
         handler.removeCallbacks(autosave)
         handler.removeCallbacks(showRunnable)
         super.onDestroy()
@@ -279,6 +294,9 @@ class MainActivity : AppCompatActivity(), DrawingView.Listener {
             .putFloat("view_${noteId}_pan_x", state.first)
             .putFloat("view_${noteId}_pan_y", state.second)
             .putFloat("view_${noteId}_zoom", state.third)
+            // the view size lets a rotated device re-fit the page it was on
+            .putFloat("view_${noteId}_w", drawing.width.toFloat())
+            .putFloat("view_${noteId}_h", drawing.height.toFloat())
             .apply()
     }
 
@@ -327,7 +345,29 @@ class MainActivity : AppCompatActivity(), DrawingView.Listener {
         btnReset.setOnClickListener {
             drawing.resetZoom()
             hidePanels()
-            showLabel("Zoom Reset")
+            showLabel(
+                if (drawing.isPdf) "Page ${drawing.currentPdfPage()} / ${drawing.pdfSlots.size}  ·  fitted"
+                else "Zoom Reset"
+            )
+        }
+
+        // PDF notebooks: switch every sheet between landscape (notes right of the
+        // PDF) and portrait (notes below it). The PDF itself always stays upright.
+        btnRotatePdf.setOnClickListener {
+            if (!loaded || !drawing.isPdf) return@setOnClickListener
+            hidePanels()
+            portraitOverflow?.visibility = View.GONE
+            hideObjectEditor()
+            val newSlots = PdfNotebook.toggledLayout(drawing.pdfSlots)
+            drawing.relayoutPdfPages(newSlots)
+            PdfNotebook.saveSlots(this, noteId, newSlots)
+            handler.removeCallbacks(autosave)
+            saveNote()
+            saveViewport()
+            showLabel(
+                if (PdfNotebook.isLandscape(newSlots)) "Landscape pages  ·  notes on the right"
+                else "Portrait pages  ·  notes below"
+            )
         }
 
         btnTheme.setOnClickListener {
@@ -923,7 +963,7 @@ class MainActivity : AppCompatActivity(), DrawingView.Listener {
         txtShapeVal.setTextColor(f)
         btnShow.setColorFilter(DrawingView.RED)
         btnShow.setBackgroundColor(b)
-        for (btn in arrayOf(btnBack, btnUndo, btnRedo, btnReset, btnTheme, btnShare, btnHide)) {
+        for (btn in arrayOf(btnBack, btnUndo, btnRedo, btnReset, btnRotatePdf, btnTheme, btnShare, btnHide)) {
             btn.setColorFilter(f)
         }
         btnToolkitToggle?.setColorFilter(f)

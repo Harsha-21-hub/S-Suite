@@ -109,6 +109,8 @@ class Stroke(
         boundsDone = 0
         val n = points.size / 2
         if (n == 0) { bounds.setEmpty(); return }
+        // strokes loaded from disk never went through addPoint()
+        pressures?.let { pr -> for (p in pr) if (p > maxPr) maxPr = p }
 
         path.moveTo(points[0], points[1])
         if (n == 1) {
@@ -292,6 +294,19 @@ class Stroke(
         endX += dx; endY += dy
     }
 
+    /** Moves every point through [map] (x, y, out) and rebuilds the geometry. */
+    fun mapPoints(map: (Float, Float, FloatArray) -> Unit) {
+        val tmp = FloatArray(2)
+        var i = 0
+        while (i < points.size) {
+            map(points[i], points[i + 1], tmp)
+            points[i] = tmp[0]
+            points[i + 1] = tmp[1]
+            i += 2
+        }
+        rebuild()
+    }
+
     fun scaleAround(f: Float, px: Float, py: Float) {
         var i = 0
         while (i < points.size) {
@@ -304,7 +319,8 @@ class Stroke(
     }
 
     /** Cheap hit test: is (x,y) within r of this stroke's ink? */
-    fun hits(x: Float, y: Float, r: Float): Boolean = distanceTo(x, y) <= width / 2f + r
+    fun hits(x: Float, y: Float, r: Float): Boolean =
+        distanceTo(x, y) <= width * (if (pressures != null) maxPr else 1f) / 2f + r
 
     /** Shortest distance from (x,y) to this stroke's polyline (Float.MAX if empty). */
     fun distanceTo(x: Float, y: Float): Float {

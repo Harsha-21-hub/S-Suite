@@ -14,11 +14,20 @@ import java.util.zip.ZipEntry
 import java.util.zip.ZipInputStream
 import java.util.zip.ZipOutputStream
 
-/** Portable S Notes notebook format (.hesi). */
+/**
+ * Portable S Notes notebook format (.snotes).
+ * Older .hesi notebooks (same zip layout, format "hesi") still open.
+ */
 object HesiNotebook {
-    const val MIME = "application/x-hesi"
+    const val EXTENSION = "snotes"
+    const val MIME = "application/x-snotes"
+    /** Older notebooks shared before the rename. Accepted on import only. */
+    const val LEGACY_MIME = "application/x-hesi"
+    private val ACCEPTED_FORMATS = setOf("snotes", "hesi")
     private const val FORMAT = 1
-    private const val MAX_UNCOMPRESSED = 256L * 1024L * 1024L
+    private const val MAX_UNCOMPRESSED = 512L * 1024L * 1024L
+    private const val PDF_ENTRY = "pdf/source.pdf"
+    private const val LAYOUT_ENTRY = "pdf/layout.json"
 
     data class Imported(
         val name: String,
@@ -36,16 +45,17 @@ object HesiNotebook {
         page: android.graphics.RectF,
         strokes: List<Stroke>,
         texts: List<TextObject>,
-        images: List<ImageObject>
+        images: List<ImageObject>,
+        noteId: String? = null
     ): File {
         val root = File(ctx.cacheDir, "shared").apply { mkdirs() }
         val safeName = name.replace(Regex("[^A-Za-z0-9._ -]"), "_").trim().ifBlank { "Notebook" }
-        val out = File(root, "$safeName.hesi")
-        val tmp = File(root, "$safeName.hesi.tmp")
+        val out = File(root, "$safeName.$EXTENSION")
+        val tmp = File(root, "$safeName.$EXTENSION.tmp")
 
         ZipOutputStream(BufferedOutputStream(FileOutputStream(tmp))).use { zip ->
             val manifest = JSONObject().apply {
-                put("format", "hesi")
+                put("format", EXTENSION)
                 put("version", FORMAT)
                 put("name", name)
                 put("pageMode", pageMode)
@@ -71,6 +81,19 @@ object HesiNotebook {
                 zip.closeEntry()
                 writeText(zip, "image_map/$index.txt", entryName)
             }
+
+            // PDF notebooks carry their source PDF + sheet layout, so the
+            // receiving device gets the exact same pages and ink positions.
+            if (noteId != null && pageMode == NoteStore.PAGE_PDF && PdfNotebook.has(ctx, noteId)) {
+                for ((entry, src) in listOf(
+                    PDF_ENTRY to PdfNotebook.pdfFile(ctx, noteId),
+                    LAYOUT_ENTRY to PdfNotebook.layoutFile(ctx, noteId)
+                )) {
+                    zip.putNextEntry(ZipEntry(entry))
+                    src.inputStream().use { it.copyTo(zip) }
+                    zip.closeEntry()
+                }
+            }
         }
         if (!tmp.renameTo(out)) {
             out.delete()
@@ -86,9 +109,10 @@ object HesiNotebook {
         page: android.graphics.RectF,
         strokes: List<Stroke>,
         texts: List<TextObject>,
-        images: List<ImageObject>
+        images: List<ImageObject>,
+        noteId: String? = null
     ) {
-        val file = exportToCache(ctx, name, pageMode, page, strokes, texts, images)
+        val file = exportToCache(ctx, name, pageMode, page, strokes, texts, images, noteId)
         val uri = androidx.core.content.FileProvider.getUriForFile(
             ctx, "${ctx.packageName}.fileprovider", file
         )
@@ -101,13 +125,13 @@ object HesiNotebook {
     }
 
     fun importFromUri(ctx: Context, uri: Uri): String {
-        val work = File(ctx.cacheDir, "hesi_import_${System.currentTimeMillis()}")
+        val work = File(ctx.cacheDir, "snotes_import_${System.currentTimeMillis()}")
         if (!work.mkdirs()) error("Unable to prepare notebook import")
         try {
             extractSafely(ctx, uri, work)
             val manifest = JSONObject(File(work, "manifest.json").readText())
-            require(manifest.optString("format") == "hesi") { "Not an S Notes notebook" }
-            require(manifest.optInt("version", -1) == FORMAT) { "Unsupported .hesi version" }
+            require(manifest.optString("format") in ACCEPTED_FORMATS) { "Not an S Notes notebook" }
+            require(manifest.optInt("version", -1) == FORMAT) { "Unsupported .snotes version" }
 
             val note = JSONObject(File(work, "note.json").readText())
             val pa = note.getJSONArray("page")
@@ -119,9 +143,15 @@ object HesiNotebook {
             val objects = decodeObjects(File(work, "objects.json").readText(), work)
 
             val name = manifest.optString("name", "Imported Notebook").ifBlank { "Imported Notebook" }
-            val pageMode = manifest.optInt("pageMode", NoteStore.PAGE_INFINITE)
+            val pdfSrc = File(work, PDF_ENTRY)
+            val layoutSrc = File(work, LAYOUT_ENTRY)
+            val hasPdf = pdfSrc.isFile && layoutSrc.isFile && PdfNotebook.loadSlots(layoutSrc) != null
+            var pageMode = manifest.optInt("pageMode", NoteStore.PAGE_INFINITE)
+            // A PDF notebook whose PDF is missing degrades to a plain canvas.
+            if (pageMode == NoteStore.PAGE_PDF && !hasPdf) pageMode = NoteStore.PAGE_INFINITE
             val id = NoteStore.create(ctx, uniqueName(ctx, name), pageMode)
             NoteStore.save(ctx, id, page, strokes)
+            if (pageMode == NoteStore.PAGE_PDF) PdfNotebook.install(ctx, id, pdfSrc, layoutSrc)
 
             for (image in objects.second) {
                 val src = File(work, "images/${sanitizeEntryName(image.name)}")
@@ -141,17 +171,17 @@ object HesiNotebook {
         }
     }
 
-    fun displayName(ctx: Context, uri: Uri): String {
+    fun displayName(ctx: Context, uri: Uri, fallback: String = "Imported Notebook"): String {
         var name: String? = null
         runCatching {
             ctx.contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use {
                 if (it.moveToFirst()) name = it.getString(0)
             }
         }
-        return name?.substringBeforeLast('.')?.ifBlank { "Imported Notebook" } ?: "Imported Notebook"
+        return name?.substringBeforeLast('.')?.ifBlank { fallback } ?: fallback
     }
 
-    private fun uniqueName(ctx: Context, requested: String): String {
+    fun uniqueName(ctx: Context, requested: String): String {
         val base = requested.trim().ifBlank { "Imported Notebook" }
         val existing = NoteStore.list(ctx).map { it.name.lowercase() }.toHashSet()
         if (base.lowercase() !in existing) return base
@@ -167,6 +197,9 @@ object HesiNotebook {
             put("eraser", s.eraser)
             put("straight", s.straight)
             put("points", JSONArray().apply { s.points.forEach { put(it.toDouble()) } })
+            if (s.hasPressure()) {
+                put("pressures", JSONArray().apply { s.pressures!!.forEach { put(Math.round(it * 100f) / 100.0) } })
+            }
         })
     }
 
@@ -182,8 +215,8 @@ object HesiNotebook {
                 o.getDouble("width").toFloat(),
                 o.optBoolean("eraser", false),
                 o.optBoolean("straight", false),
-                null
-            ).also { it.rebuild() })
+                NoteStore.decodePressures(o.optJSONArray("pressures"), list.size / 2)
+            ).also { if (it.hasPressure()) it.seal() else it.rebuild() })
         }
     }
 
@@ -268,8 +301,8 @@ object HesiNotebook {
                 }
             }
         }
-        require(File(destination, "manifest.json").isFile) { "Invalid .hesi notebook" }
-        require(File(destination, "note.json").isFile) { "Invalid .hesi notebook" }
-        require(File(destination, "objects.json").isFile) { "Invalid .hesi notebook" }
+        require(File(destination, "manifest.json").isFile) { "Invalid .snotes notebook" }
+        require(File(destination, "note.json").isFile) { "Invalid .snotes notebook" }
+        require(File(destination, "objects.json").isFile) { "Invalid .snotes notebook" }
     }
 }

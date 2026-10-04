@@ -197,6 +197,13 @@
             android:gravity="center_horizontal">
 
             <ImageButton
+                android:id="@+id/btnRotatePdf"
+                style="@style/ToolBtn"
+                android:src="@drawable/ic_page_orientation"
+                android:visibility="gone"
+                android:contentDescription="@string/page_orientation" />
+
+            <ImageButton
                 android:id="@+id/btnReset"
                 style="@style/ToolBtn"
                 android:src="@drawable/ic_zoom_reset"

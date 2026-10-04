@@ -18,42 +18,133 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
-            <!-- Open S Notes .hesi notebooks received from file managers, chat apps, Drive, etc. -->
+            <!--
+                File associations:
+                  * .snotes / legacy .hesi
+                  * PDFs (opened as PDF + canvas notebooks)
+
+                IMPORTANT: do NOT register a generic */* VIEW filter. A content
+                provider usually gives Android a generic MIME type for unrelated
+                files such as APK/TXT/ZIP, and a wildcard VIEW filter would make
+                S Notes appear in their "Open with" chooser.
+            -->
+
+            <!-- 1. S Notes notebooks when the sender provides our custom MIME.
+                 This is the reliable path for S Notes shares and apps that know
+                 the .snotes MIME type. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="content" android:mimeType="application/x-snotes" />
+            </intent-filter>
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data android:scheme="content" android:mimeType="application/x-hesi" />
             </intent-filter>
+
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
-                <data android:scheme="content" android:mimeType="application/octet-stream" android:pathPattern=".*\\.hesi" />
+                <data android:scheme="content" android:pathSuffix=".snotes" />
             </intent-filter>
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
-                <data android:scheme="content" android:mimeType="*/*" android:pathPattern=".*\\.hesi" />
+                <data android:scheme="content" android:pathSuffix=".SNOTES" />
             </intent-filter>
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
-                <data android:scheme="file" android:mimeType="application/x-hesi" />
+                <data android:scheme="content" android:pathSuffix=".hesi" />
+            </intent-filter>
+            <!-- WhatsApp/file providers may report .snotes/.snote as generic BIN
+                 (application/octet-stream). Match the extension too, so these
+                 files can appear without registering S Notes for all files. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="content" android:mimeType="application/octet-stream" android:pathSuffix=".snotes" />
             </intent-filter>
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
-                <data android:scheme="file" android:mimeType="application/octet-stream" android:pathPattern=".*\\.hesi" />
+                <data android:scheme="content" android:mimeType="application/octet-stream" android:pathSuffix=".snote" />
             </intent-filter>
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
-                <data android:scheme="file" android:mimeType="*/*" android:pathPattern=".*\\.hesi" />
+                <data android:scheme="content" android:mimeType="application/octet-stream" android:pathSuffix=".SNOTES" />
+            </intent-filter>
+
+            <!-- 2. Legacy/local file:// paths can be matched by extension.
+                 Keep these separate from MIME filters so they cannot broaden
+                 into a catch-all content/* association. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="file" android:mimeType="*/*" android:pathSuffix=".snotes" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="file" android:mimeType="*/*" android:pathSuffix=".snote" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="file" android:mimeType="*/*" android:pathSuffix=".hesi" />
+            </intent-filter>
+
+            <!-- Upper-case extension variants for file:// senders. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="file" android:mimeType="*/*" android:pathSuffix=".SNOTES" />
+            </intent-filter>
+
+            <!-- 3. PDFs: open/import exactly like the in-app IMPORT PDF action,
+                 producing a PDF + canvas notebook rather than a PDF viewer. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="content" android:mimeType="application/pdf" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="file" android:mimeType="application/pdf" />
+            </intent-filter>
+
+            <!-- 4. Share actions. -->
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="application/pdf" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="application/x-snotes" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="application/x-hesi" />
             </intent-filter>
         </activity>
 

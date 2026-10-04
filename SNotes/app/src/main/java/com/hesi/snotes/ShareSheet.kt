@@ -9,7 +9,11 @@ import android.view.LayoutInflater
 import android.widget.PopupMenu
 import android.widget.RadioGroup
 import android.widget.TextView
+import android.os.Handler
+import android.os.Looper
+import android.widget.Toast
 import androidx.appcompat.app.AlertDialog
+import java.io.File
 
 /**
  * Requirement G8/G9 - dark, compact "SHARE / EXPORT" sheet, used from both the
@@ -91,8 +95,14 @@ object ShareSheet {
                 if (noteId == null) {
                     android.widget.Toast.makeText(ctx, "Notebook export is unavailable", android.widget.Toast.LENGTH_SHORT).show()
                 } else {
-                    HesiNotebook.share(ctx, name, pageMode = NoteStore.readPageMode(ctx, noteId), page, strokes, texts, images)
+                    HesiNotebook.share(
+                        ctx, name, pageMode = NoteStore.readPageMode(ctx, noteId), page, strokes, texts, images, noteId
+                    )
                 }
+            } else if (noteId != null && NoteStore.readPageMode(ctx, noteId) == NoteStore.PAGE_PDF &&
+                PdfNotebook.has(ctx, noteId)
+            ) {
+                exportPdfNotebook(ctx, noteId, name, strokes, inkDark, fmt, outDark, gallery, texts, images)
             } else {
                 doExport(ctx, name, page, strokes, inkDark, fmt, outDark, gallery, texts, images)
             }
@@ -102,6 +112,64 @@ object ShareSheet {
         dialog.setOnShowListener { Fonts.applyToDialog(it as Dialog) }
         dialog.window?.setWindowAnimations(R.style.DialogAnim)
         dialog.show()
+    }
+
+    /**
+     * PDF notebooks: every canvas sheet (PDF page + the drawing space around it)
+     * becomes one page / image. Rendering a long PDF takes a while, so it runs
+     * off the UI thread with a progress dialog, and pages are streamed to disk
+     * one at a time so memory stays flat.
+     */
+    private fun exportPdfNotebook(
+        ctx: Context, noteId: String, name: String, strokes: List<Stroke>,
+        inkDark: Boolean, fmt: Fmt, outDark: Boolean, toGallery: Boolean,
+        texts: List<TextObject>, images: List<ImageObject>
+    ) {
+        val slots = PdfNotebook.loadSlots(ctx, noteId) ?: run {
+            Toast.makeText(ctx, "Share failed", Toast.LENGTH_SHORT).show(); return
+        }
+        // snapshots: the user may keep drawing while this runs
+        val strokeSnap = ArrayList(strokes)
+        val textSnap = texts.map { TextObject(it.text, it.x, it.y, it.w, it.h, it.size, it.color, it.rotation) }
+        val imageSnap = images.map { im ->
+            ImageObject(im.name, im.x, im.y, im.w, im.h, im.rotation).also { it.bitmap = im.bitmap }
+        }
+        val progress = BusyDialog.show(ctx, ctx.getString(R.string.exporting))
+        val main = Handler(Looper.getMainLooper())
+        val onProgress: (Int, Int) -> Unit = { i, n ->
+            main.post { progress.update(ctx.getString(R.string.exporting_page, i, n)) }
+        }
+        Thread {
+            val result = runCatching {
+                when {
+                    toGallery -> PdfNotebook.saveToGallery(
+                        ctx, noteId, name, slots, strokeSnap, textSnap, imageSnap, outDark, inkDark, onProgress
+                    )
+                    fmt == Fmt.PDF -> PdfNotebook.writePdf(
+                        ctx, noteId, name, slots, strokeSnap, textSnap, imageSnap, outDark, inkDark,
+                        Exporter.freshShareDir(ctx), onProgress
+                    )
+                    else -> PdfNotebook.writeImages(
+                        ctx, noteId, name, slots, strokeSnap, textSnap, imageSnap, outDark, inkDark,
+                        asPng = fmt == Fmt.PNG, dir = Exporter.freshShareDir(ctx), progress = onProgress
+                    )
+                }
+            }
+            main.post {
+                progress.dismiss()
+                val r = result.getOrNull()
+                when {
+                    result.isFailure -> Toast.makeText(ctx, "Export failed", Toast.LENGTH_SHORT).show()
+                    r is Int -> Toast.makeText(
+                        ctx, if (r > 0) "$r images saved to Pictures/S Notes" else "Save failed", Toast.LENGTH_SHORT
+                    ).show()
+                    r is File -> Exporter.shareFiles(ctx, listOf(r), "application/pdf")
+                    r is List<*> -> Exporter.shareFiles(
+                        ctx, r.filterIsInstance<File>(), if (fmt == Fmt.PNG) "image/png" else "image/jpeg"
+                    )
+                }
+            }
+        }.start()
     }
 
     private fun doExport(

@@ -6,6 +6,13 @@
     <string name="new_note_short"> NEW NOTE</string>
     <string name="open_notebook_short">OPEN NOTE</string>
     <string name="open_notebook">OPEN NOTEBOOK</string>
+    <string name="import_pdf_short">IMPORT PDF</string>
+    <string name="importing_pdf">IMPORTING PDF…</string>
+    <string name="exporting">EXPORTING…</string>
+    <string name="exporting_page">EXPORTING PAGE %1$d / %2$d</string>
+    <string name="pdf_import_failed">Couldn\'t open this PDF</string>
+    <string name="pdf_password">This PDF is password-protected</string>
+    <string name="page_type_pdf">PDF NOTEBOOK</string>
     <string name="rename">RENAME</string>
     <string name="delete">DELETE</string>
     <string name="deselect">DESELECT</string>
@@ -19,7 +26,7 @@
     <string name="share_jpg">SHARE AS JPG</string>
     <string name="share_pdf">SHARE AS PDF</string>
     <string name="save_gallery">SAVE TO GALLERY</string>
-    <string name="share_notebook">SHARE NOTEBOOK (.HESI)</string>
+    <string name="share_notebook">SHARE NOTEBOOK (.SNOTES)</string>
     <string name="export_theme">COLOUR SCHEME</string>
     <string name="export_light">LIGHT  (black ink, white paper)</string>
     <string name="export_dark">DARK  (white ink, black paper)</string>
@@ -40,6 +47,7 @@
 
     <!-- Requirement 9 -->
     <string name="reset_zoom">RESET ZOOM</string>
+    <string name="page_orientation">PAGE ORIENTATION</string>
 
     <!-- Requirement 1: shape size (independent of pen) -->
     <string name="shape_size">SHAPE SIZE</string>
@@ -52,7 +60,7 @@
     <string name="selected_count">%1$d SELECTED</string>
     <string name="guide">GUIDE</string>
     <string name="guide_title">HOW TO USE S NOTES</string>
-    <string name="guide_body">• PEN — write or draw freely on the page.\n\n• ERASER — remove part of your drawing.\n\n• LASER — draw a temporary pointer that fades away smoothly.\n\n• SHAPES — choose a shape, then drag in any direction to draw it.\n\n• SELECT — tap an object or drag around an area to select, move, resize, rotate, or delete it.\n\n• TEXT — tap the page to add text and edit it later with Select.\n\n• IMAGE — insert an image and resize, rotate, move, or edit it.\n\n• PAGE — the page extends automatically as you continue writing.\n\n• RESET ZOOM — reset the zoom while keeping your current page position.\n\n• SHARE / EXPORT — save or share your note as PDF, JPG, or PNG.\n\n• HOME — rename, select, export, restore, or delete notes from the home page.</string>
+    <string name="guide_body">• PEN — write or draw freely on the page. With a stylus (S Pen, OnePlus Stylo, etc.) the line follows your pressure automatically: press lightly for thin lines, harder for thick ones.\n\n• ERASER — remove part of your drawing.\n\n• LASER — draw a temporary pointer that fades away smoothly.\n\n• SHAPES — choose a shape, then drag in any direction to draw it.\n\n• SELECT — tap an object or drag around an area to select, move, resize, rotate, or delete it.\n\n• TEXT — tap the page to add text and edit it later with Select.\n\n• IMAGE — insert an image and resize, rotate, move, or edit it.\n\n• IMPORT PDF — on the home page, tap IMPORT PDF. Every PDF page gets its own canvas sheet: the white PDF page plus free space beside it (portrait pages) or below it (landscape pages). Write anywhere on the sheet. RESET ZOOM fits the current sheet in portrait or landscape. The PAGE ORIENTATION button (PDF notebooks only) switches every page between landscape (writing space to the right of the PDF) and portrait (writing space below it). The PDF always stays upright; your notes move with the space they were written in.\n\n• PAGE — the page extends automatically as you continue writing.\n\n• RESET ZOOM — reset the zoom while keeping your current page position.\n\n• SHARE / EXPORT — save or share your note as PDF, JPG, or PNG. PDF notebooks export every sheet in full - the PDF page together with everything you wrote around it.\n\n• HOME — rename, select, export, restore, or delete notes from the home page.</string>
     <string name="close">CLOSE</string>
     <string name="got_it">GOT IT</string>
 

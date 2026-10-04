@@ -8,6 +8,7 @@ import android.graphics.Bitmap
 import android.graphics.Color
 import android.graphics.drawable.GradientDrawable
 import android.os.Bundle
+import android.provider.OpenableColumns
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
@@ -30,6 +31,7 @@ class NotesActivity : AppCompatActivity() {
 
     companion object {
         private const val REQUEST_OPEN_HESI = 7401
+        private const val REQUEST_IMPORT_PDF = 7402
     }
 
     private lateinit var rootNotes: FrameLayout
@@ -39,6 +41,8 @@ class NotesActivity : AppCompatActivity() {
     private lateinit var txtStorage: TextView
     private lateinit var btnNew: TextView
     private lateinit var btnOpenNotebook: TextView
+    private lateinit var btnImportPdf: TextView
+    private lateinit var notebookActionDivider2: View
     private lateinit var btnGuide: ImageButton
     private lateinit var btnTrash: ImageButton
     private lateinit var btnThemeList: ImageButton
@@ -79,6 +83,8 @@ class NotesActivity : AppCompatActivity() {
         txtStorage = findViewById(R.id.txtStorage)
         btnNew = findViewById(R.id.btnNew)
         btnOpenNotebook = findViewById(R.id.btnOpenNotebook)
+        btnImportPdf = findViewById(R.id.btnImportPdf)
+        notebookActionDivider2 = findViewById(R.id.notebookActionDivider2)
         btnGuide = findViewById(R.id.btnGuide)
         btnTrash = findViewById(R.id.btnTrash)
         btnThemeList = findViewById(R.id.btnThemeList)
@@ -101,6 +107,7 @@ class NotesActivity : AppCompatActivity() {
         recycler.adapter = adapter
 
         btnOpenNotebook.setOnClickListener { openNotebookPicker() }
+        btnImportPdf.setOnClickListener { openPdfPicker() }
 
         btnNew.setOnClickListener {
             if (inTrash) {
@@ -143,7 +150,9 @@ class NotesActivity : AppCompatActivity() {
         btnSelDelete.setOnClickListener { deleteSelected() }
 
         Fonts.apply(rootNotes)
-        handleIncomingNotebookIntent(intent)
+        // Only a fresh launch handles the incoming file; after a rotation the
+        // activity is recreated with the same intent and must not import twice.
+        if (savedInstanceState == null) handleIncomingNotebookIntent(intent)
     }
 
     override fun onBackPressed() {
@@ -184,11 +193,15 @@ class NotesActivity : AppCompatActivity() {
                     btnNew.visibility = if (hasTrash) View.VISIBLE else View.GONE
                     btnOpenNotebook.visibility = View.GONE
                     notebookActionDivider.visibility = View.GONE
+                    btnImportPdf.visibility = View.GONE
+                    notebookActionDivider2.visibility = View.GONE
                 } else {
                     notebookActions.visibility = View.VISIBLE
                     btnNew.visibility = View.VISIBLE
                     btnOpenNotebook.visibility = View.VISIBLE
                     notebookActionDivider.visibility = View.VISIBLE
+                    btnImportPdf.visibility = View.VISIBLE
+                    notebookActionDivider2.visibility = View.VISIBLE
                 }
                 (btnNew.layoutParams as LinearLayout.LayoutParams).apply {
                     width = 0
@@ -209,10 +222,41 @@ class NotesActivity : AppCompatActivity() {
         val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
             addCategory(Intent.CATEGORY_OPENABLE)
             type = "*/*"
-            putExtra(Intent.EXTRA_MIME_TYPES, arrayOf(HesiNotebook.MIME, "application/octet-stream"))
+            putExtra(Intent.EXTRA_MIME_TYPES, arrayOf(HesiNotebook.MIME, HesiNotebook.LEGACY_MIME, "application/octet-stream"))
         }
         runCatching { startActivityForResult(intent, REQUEST_OPEN_HESI) }
             .onFailure { Toast.makeText(this, "Unable to open notebook picker", Toast.LENGTH_SHORT).show() }
+    }
+
+    // =====================================================================
+    //  PDF import - each PDF page becomes its own canvas sheet
+    // =====================================================================
+
+    private fun openPdfPicker() {
+        if (inTrash) return
+        val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE)
+            type = "application/pdf"
+        }
+        runCatching { startActivityForResult(intent, REQUEST_IMPORT_PDF) }
+            .onFailure { Toast.makeText(this, "Unable to open file picker", Toast.LENGTH_SHORT).show() }
+    }
+
+    private fun importPdf(uri: android.net.Uri) {
+        val busy = BusyDialog.show(this, getString(R.string.importing_pdf))
+        Thread {
+            val result = runCatching { PdfNotebook.importFromUri(this, uri) }
+            runOnUiThread {
+                busy.dismiss()
+                if (isFinishing || isDestroyed) return@runOnUiThread
+                result.onSuccess { id -> refresh(); openNote(id) }
+                    .onFailure { e ->
+                        val msg = if (e is PdfNotebook.PasswordProtected) R.string.pdf_password
+                        else R.string.pdf_import_failed
+                        Toast.makeText(this, msg, Toast.LENGTH_LONG).show()
+                    }
+            }
+        }.start()
     }
 
     override fun onNewIntent(intent: Intent?) {
@@ -226,24 +270,74 @@ class NotesActivity : AppCompatActivity() {
         if (requestCode == REQUEST_OPEN_HESI && resultCode == RESULT_OK) {
             handleIncomingNotebookIntent(data)
         }
+        if (requestCode == REQUEST_IMPORT_PDF && resultCode == RESULT_OK) {
+            data?.data?.let { importPdf(it) }
+        }
     }
 
+    /**
+     * A file opened from another app ("Open with S Notes" / shared to S Notes),
+     * or picked with OPEN NOTE. The content decides what it is, not the name:
+     *   %PDF-  -> imported exactly like the IMPORT PDF button (PDF + canvas)
+     *   PK     -> a .snotes notebook (zip)
+     */
     private fun handleIncomingNotebookIntent(intent: Intent?) {
-        val uri = intent?.data ?: runCatching { intent?.getParcelableExtra<android.net.Uri>(Intent.EXTRA_STREAM) }.getOrNull() ?: return
+        val uri = intent?.data
+            ?: runCatching { intent?.getParcelableExtra<android.net.Uri>(Intent.EXTRA_STREAM) }.getOrNull()
+            ?: return
+        // consume it, so returning to this screen never imports the same file again
+        if (intent === this.intent) setIntent(Intent(this, NotesActivity::class.java))
         try {
-            contentResolver.takePersistableUriPermission(
-                uri, Intent.FLAG_GRANT_READ_URI_PERMISSION
-            )
+            contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
         } catch (_: Exception) { }
+        if (isPdf(uri, intent?.type)) {
+            importPdf(uri)
+            return
+        }
+        if (!isSNotes(uri, intent?.type)) {
+            Toast.makeText(this, "S Notes can open only .snotes/.snote notebooks or PDFs", Toast.LENGTH_LONG).show()
+            return
+        }
         Thread {
             val result = runCatching { HesiNotebook.importFromUri(this, uri) }
             runOnUiThread {
-                result.onSuccess { id -> openNote(id) }
+                if (isFinishing || isDestroyed) return@runOnUiThread
+                result.onSuccess { id -> refresh(); openNote(id) }
                     .onFailure {
-                        Toast.makeText(this, "Could not open .hesi notebook", Toast.LENGTH_LONG).show()
+                        Toast.makeText(this, "Could not open .snotes notebook", Toast.LENGTH_LONG).show()
                     }
             }
         }.start()
+    }
+
+    /** True only for S Notes notebooks (.snotes/.hesi) or their custom MIME types. */
+    private fun isSNotes(uri: android.net.Uri, intentType: String?): Boolean {
+        val name = runCatching {
+            contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { c ->
+                if (c.moveToFirst()) c.getString(0) else null
+            }
+        }.getOrNull()?.lowercase(Locale.ROOT)
+
+        if (name != null) {
+            return name.endsWith(".snotes") || name.endsWith(".snote") || name.endsWith(".hesi")
+        }
+
+        return intentType == HesiNotebook.MIME || intentType == HesiNotebook.LEGACY_MIME
+    }
+
+    /** True for a PDF: by its first bytes ("%PDF-"), falling back to the MIME type. */
+    private fun isPdf(uri: android.net.Uri, intentType: String?): Boolean {
+        val head = runCatching {
+            contentResolver.openInputStream(uri)?.use { input ->
+                val buf = ByteArray(5)
+                var n = 0
+                while (n < 5) { val r = input.read(buf, n, 5 - n); if (r <= 0) break; n += r }
+                String(buf, 0, n, Charsets.ISO_8859_1)
+            }
+        }.getOrNull()
+        if (head != null) return head == "%PDF-"
+        val type = intentType ?: runCatching { contentResolver.getType(uri) }.getOrNull()
+        return type == "application/pdf"
     }
 
     private fun openNote(id: String) {
@@ -337,23 +431,55 @@ class NotesActivity : AppCompatActivity() {
         txtSelCount.text = getString(R.string.selected_count, selectedIds.size)
     }
 
+    /**
+     * Shares every selected note as JPG pages in one go. Runs off the UI thread
+     * and streams each page to disk, so PDF notebooks with many pages (every
+     * sheet = PDF page + its drawing space) don't run out of memory.
+     */
     private fun exportSelected() {
         val ids = selectedIds.toList()
         if (ids.isEmpty()) return
-        val bitmaps = ArrayList<Bitmap>()
-        for (id in ids) {
-            val data = NoteStore.load(this, id) ?: continue
-            val objs = NoteStore.loadObjects(this, id)
-            bitmaps.addAll(
-                Exporter.renderPages(
-                    data.second, data.first, outDark = false, inkDark = false, split = true,
-                    texts = objs.first, images = objs.second
-                )
-            )
-        }
-        if (bitmaps.isEmpty()) return
-        Exporter.shareImages(this, bitmaps, asPng = false, name = "S Notes")
         exitSelection()
+        val busy = BusyDialog.show(this, getString(R.string.exporting))
+        Thread {
+            val files = ArrayList<java.io.File>()
+            runCatching {
+                val dir = Exporter.freshShareDir(this)
+                for ((n, id) in ids.withIndex()) {
+                    if (NoteStore.readPageMode(this, id) == NoteStore.PAGE_PDF) PdfNotebook.upgradeIfNeeded(this, id)
+                    val data = NoteStore.load(this, id) ?: continue
+                    val objs = NoteStore.loadObjects(this, id)
+                    val name = "${n + 1}_" + NoteStore.readName(this, id)
+                    val slots = if (NoteStore.readPageMode(this, id) == NoteStore.PAGE_PDF)
+                        PdfNotebook.loadSlots(this, id) else null
+                    if (slots != null) {
+                        files.addAll(PdfNotebook.writeImages(
+                            this, id, name, slots, data.second, objs.first, objs.second,
+                            outDark = false, inkDark = false, asPng = false, dir = dir
+                        ))
+                    } else {
+                        val pages = Exporter.renderPages(
+                            data.second, data.first, outDark = false, inkDark = false, split = true,
+                            texts = objs.first, images = objs.second
+                        )
+                        val safe = name.replace(Regex("[^A-Za-z0-9 _-]"), "").trim().ifBlank { "note" }
+                        for ((i, bmp) in pages.withIndex()) {
+                            val suffix = if (pages.size > 1) "_p${i + 1}" else ""
+                            val f = java.io.File(dir, "$safe$suffix.jpg")
+                            java.io.FileOutputStream(f).use { bmp.compress(Bitmap.CompressFormat.JPEG, 95, it) }
+                            bmp.recycle()
+                            files.add(f)
+                        }
+                    }
+                }
+            }
+            runOnUiThread {
+                busy.dismiss()
+                if (isFinishing || isDestroyed) return@runOnUiThread
+                if (files.isEmpty()) Toast.makeText(this, "Share failed", Toast.LENGTH_SHORT).show()
+                else Exporter.shareFiles(this, files, "image/jpeg")
+            }
+        }.start()
     }
 
     private fun deleteSelected() {
@@ -424,8 +550,11 @@ class NotesActivity : AppCompatActivity() {
             h.name.text = m.name.uppercase(Locale.getDefault())
             h.date.text = getString(R.string.item_saved, fmtSaved.format(Date(m.modified)))
             h.created.text = getString(R.string.item_created, fmtCreated.format(Date(m.created)))
-            h.type.text = if (NoteStore.readPageMode(this@NotesActivity, m.id) == NoteStore.PAGE_MULTI_INFINITE)
-                getString(R.string.page_type_multi) else getString(R.string.page_type_infinite)
+            h.type.text = when (NoteStore.readPageMode(this@NotesActivity, m.id)) {
+                NoteStore.PAGE_MULTI_INFINITE -> getString(R.string.page_type_multi)
+                NoteStore.PAGE_PDF -> getString(R.string.page_type_pdf)
+                else -> getString(R.string.page_type_infinite)
+            }
             h.size.text = NoteStore.formatSize(m.bytes)
             h.name.setTextColor(fg())
             h.date.setTextColor(sub)
@@ -542,6 +671,8 @@ class NotesActivity : AppCompatActivity() {
 
         /** Requirement 1/4 - the same Share sheet as the editor, from the list. */
         private fun shareNote(m: NoteStore.Meta) {
+            if (NoteStore.readPageMode(this@NotesActivity, m.id) == NoteStore.PAGE_PDF)
+                PdfNotebook.upgradeIfNeeded(this@NotesActivity, m.id)
             val data = NoteStore.load(this@NotesActivity, m.id) ?: return
             val objs = NoteStore.loadObjects(this@NotesActivity, m.id)
             ShareSheet.show(

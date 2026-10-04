@@ -1,6 +1,6 @@
 # 📓 S Notes
 
-**S Notes** is a lightweight Android note-taking app built around a custom drawing canvas. It supports handwriting, drawing, temporary laser pointers, shapes, text, images, notebook organization, and portable `.hesi` notebooks.
+**S Notes** is a lightweight Android note-taking app built around a custom drawing canvas. It supports handwriting, drawing, temporary laser pointers, shapes, text, images, notebook organization, and portable `.snotes` notebooks.
 
 S Notes is part of the **S-Suite** ecosystem.
 
@@ -8,7 +8,9 @@ S Notes is part of the **S-Suite** ecosystem.
 
 ### 🖊️ Drawing & Writing
 - Custom canvas for handwriting and freehand drawing.
-- Raw strokes are stored without pressure-based smoothing or beautification.
+- Automatic stylus pressure sensitivity (S Pen, OnePlus Stylo, USI / MPP pens): light pressure draws thin, heavy pressure draws thick. It turns on by itself when a stylus touches the screen — no setting. Finger drawing keeps a constant width, and pens without a pressure sensor draw at the normal size.
+- Pressure is saved with each stroke and kept in exports and `.snotes` notebooks.
+- Strokes are stored exactly as drawn, without beautification.
 - Pen color and size controls.
 - Normal eraser for partial erasing.
 - Stroke eraser for removing complete strokes.
@@ -52,9 +54,21 @@ When creating a notebook, choose between:
 
 The current page position is preserved when reopening a notebook. Reset Zoom restores the default zoom while keeping the current page position.
 
+### 📑 PDF Notebooks
+- **Import PDF** from the home page (third button in the bottom pill).
+- Every PDF page becomes its own **separate canvas sheet**: the white PDF page plus free drawing space around it.
+  - Each sheet = the PDF page + a writing panel of the same size.
+  - Portrait PDFs start as landscape sheets (PDF left, notes right); landscape PDFs start as portrait sheets (PDF top, notes below). Switch any time with the page orientation button.
+- Write, draw, erase, add shapes, text and images anywhere on the sheet — on the PDF or beside it. Erasers only remove ink, never the PDF.
+- The PDF keeps its real white paper in both themes; ink on the PDF stays dark so it is always readable.
+- Pages render in the background and sharpen as you zoom in.
+- **Reset Zoom** fits the current sheet on screen; rotating between portrait and landscape re-fits the sheet you were on.
+- **Page orientation** button (PDF notebooks): switch every sheet between landscape (writing space right of the PDF) and portrait (writing space below). The PDF always stays upright; ink on the PDF stays on it, and notes move with their writing space. A line drawn from the PDF into the notes area is cut neatly at the edge and joins up again when you switch back.
+- Page numbers are shown under every sheet.
+
 ### 📚 Home Page
 - Create new notebooks.
-- Open existing `.hesi` notebooks.
+- Open existing `.snotes` notebooks.
 - Rename notebooks.
 - Select multiple notebooks.
 - Export or share selected notebooks.
@@ -82,20 +96,22 @@ Notes can be exported or shared as:
 - PNG
 - Gallery images
 
+PDF notebooks export every sheet in full — the PDF page together with everything written on and around it — as one PDF page / one image per sheet, and `.snotes` notebooks include the original PDF so they open identically on another device.
+
 Export supports:
 - Light output: black ink on white paper.
 - Dark output: white ink on black paper.
 - Single-image or split-page image layouts where supported.
 
-### 📦 Portable `.hesi` Notebooks
+### 📦 Portable `.snotes` Notebooks
 
 S Notes has its own editable notebook format:
 
 ```text
-.hesi
+.snotes
 ```
 
-A `.hesi` notebook stores the notebook structure and editable content instead of flattening everything into one image.
+A `.snotes` notebook stores the notebook structure and editable content instead of flattening everything into one image.
 
 It can contain:
 - Notebook name
@@ -107,9 +123,9 @@ It can contain:
 - Image objects
 - Inserted image data
 
-A `.hesi` notebook can be shared to another device with S Notes and imported there.
+A `.snotes` notebook can be shared to another device with S Notes and imported there.
 
-S Notes is also registered to handle `.hesi` files from supported file managers, sharing apps, and document providers.
+S Notes is also registered to handle `.snotes` files from supported file managers, sharing apps, and document providers. Notebooks shared from older versions with the `.hesi` extension still open.
 
 ## 🔒 Privacy
 
@@ -123,10 +139,10 @@ S Notes is designed to work locally on the device. Notebook data is stored local
 - **Compile SDK:** 34
 - **Language:** Kotlin
 - **UI:** Android XML layouts and custom Views
-- **Package:** `com.hesi.snotes`
+- **Package:** `com.snotes.snotes`
 - **Java/Kotlin target:** Java 17 / JVM 17
 - **Main drawing engine:** Custom `DrawingView`
-- **Portable notebook format:** `.hesi`
+- **Portable notebook format:** `.snotes`
 - **Rendering:** Hardware accelerated Android canvas
 - **Dependencies:** AndroidX Core KTX, AppCompat, RecyclerView
 

@@ -62,7 +62,11 @@ object NoteStore {
             val created = lines.getOrNull(1)?.trim()?.toLongOrNull()
                 ?: f.lastModified().let { if (it > 0) it else System.currentTimeMillis() }
             val mod = data.lastModified().let { if (it > 0) it else f.lastModified() }
-            out.add(Meta(id, name, mod, created, data.length() + f.length()))
+            // PDF notebooks also own their source PDF (files/notes/pdf/<id>/)
+            val notesRoot = if (folder.name == "trash") folder.parentFile else folder
+            val pdfBytes = File(File(notesRoot, "pdf"), id).listFiles()
+                ?.sumOf { if (it.isFile) it.length() else 0L } ?: 0L
+            out.add(Meta(id, name, mod, created, data.length() + f.length() + pdfBytes))
         }
         out.sortByDescending { it.modified }
         return out
@@ -91,6 +95,8 @@ object NoteStore {
     const val PAGE_INFINITE = 0
     const val PAGE_LIMITED = 1
     const val PAGE_MULTI_INFINITE = 2
+    /** Imported PDF: one fixed canvas sheet per PDF page (see PdfNotebook). */
+    const val PAGE_PDF = 3
     private const val A4_H = 3111f          // A4 height for a 2200-wide column
     private const val LIMITED_PAGES = 4
 
@@ -116,9 +122,21 @@ object NoteStore {
 
     fun objImageFile(ctx: Context, id: String, name: String) = File(objImgDir(ctx, id), name)
 
+    /** Same as [saveObjects] but writes before returning (used by upgrades). */
+    fun saveObjectsNow(
+        ctx: Context, id: String, texts: List<TextObject>, images: List<ImageObject>
+    ) {
+        writeAtomic(objFile(ctx, id), encodeObjects(texts, images))
+    }
+
     fun saveObjects(
         ctx: Context, id: String, texts: List<TextObject>, images: List<ImageObject>
     ) {
+        val json = encodeObjects(texts, images)
+        io.execute { runCatching { writeAtomic(objFile(ctx, id), json) } }
+    }
+
+    private fun encodeObjects(texts: List<TextObject>, images: List<ImageObject>): String {
         val root = JSONObject()
         val ta = JSONArray()
         for (t in texts) {
@@ -136,7 +154,7 @@ object NoteStore {
             })
         }
         root.put("texts", ta); root.put("images", ia)
-        io.execute { runCatching { writeAtomic(objFile(ctx, id), root.toString()) } }
+        return root.toString()
     }
 
     /** Loads objects (bitmaps decoded from the note's image dir). Empty if none. */
@@ -222,9 +240,13 @@ object NoteStore {
         trashMeta(ctx, id).delete()
         objFile(ctx, id).delete()
         objImgDir(ctx, id).deleteRecursively()
+        PdfNotebook.delete(ctx, id)
     }
 
     fun emptyTrash(ctx: Context) {
+        // Remove each trashed note completely (objects + imported PDF too).
+        trashDir(ctx).listFiles { f -> f.isFile && f.name.endsWith(".meta") }
+            ?.forEach { deleteForever(ctx, it.name.removeSuffix(".meta")) }
         trashDir(ctx).listFiles()?.forEach { if (it.isFile) it.delete() }
     }
 
@@ -251,6 +273,12 @@ object NoteStore {
             val pts = JSONArray()
             for (p in s.points) pts.put(p.toDouble())
             o.put("p", pts)
+            // stylus pressure: per-point width multiplier (2 decimals is plenty)
+            if (s.hasPressure()) {
+                val pr = JSONArray()
+                for (v in s.pressures!!) pr.put(Math.round(v * 100f) / 100.0)
+                o.put("pr", pr)
+            }
             arr.put(o)
         }
         root.put("strokes", arr)
@@ -319,15 +347,23 @@ object NoteStore {
                     o.getDouble("w").toFloat(),
                     o.optInt("e", 0) == 1,
                     o.optInt("s", 0) == 1,
-                    null
+                    decodePressures(o.optJSONArray("pr"), list.size / 2)
                 )
-                // Build only the exact centre-line path on the background thread.
-                // No pressure outline / beautification is reconstructed.
-                s.rebuild()
+                // Pressure strokes are baked into their filled outline here, on
+                // the background thread; plain strokes just need the centre line.
+                if (s.hasPressure()) s.seal() else s.rebuild()
                 strokes.add(s)
             }
             page to strokes
         }.getOrNull()
+    }
+
+    /** Pressure list for a stroke, or null if absent / not matching the points. */
+    fun decodePressures(arr: JSONArray?, pointCount: Int): ArrayList<Float>? {
+        if (arr == null || arr.length() != pointCount || pointCount < 2) return null
+        val out = ArrayList<Float>(pointCount)
+        for (i in 0 until arr.length()) out.add(arr.getDouble(i).toFloat())
+        return out
     }
 
     /** "12.4 KB" / "1.8 MB" - shown on the home screen. */

@@ -126,8 +126,13 @@ class DrawingView @JvmOverloads constructor(
     private var pdist = 0f
     private val pendingRemoved = ArrayList<Pair<Int, Stroke>>()
 
-    // Drawing is deliberately raw: sampled points are stored at a constant width.
-    // No pressure-to-width conversion, speed weighting or smoothing is applied.
+    // ---------- Stylus pressure ----------
+    // Automatic, no setting: whenever the PEN tool is driven by a stylus (S Pen,
+    // OnePlus Stylo, USI/MPP pens ...) the reported pressure sets the line width
+    // at every point - a light touch writes thin, pressing hard writes thick.
+    // Fingers (and the side eraser button) always keep the constant pen size.
+    // The pen SIZE slider is the width at a normal, medium pressure.
+    private var pressEma = 0.5f
 
     // ---------- Manual shape drag ----------
     private var shapeX0 = 0f
@@ -174,6 +179,22 @@ class DrawingView @JvmOverloads constructor(
     private val objHandleLine = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; color = 0xFF3A3A3A.toInt() }
     private val objToolFill = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL; color = 0xF2242424.toInt() }
     private val objToolIcon = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; color = Color.WHITE }
+
+    // ---------- PDF notebook ----------
+    // Each PDF page lives on its own fixed canvas sheet (PdfNotebook.Slot). The
+    // PDF keeps its real white paper in both themes; ink ON the paper is drawn
+    // in its light-paper colour so black ink never turns invisible on it.
+    var pdfSlots: List<PdfNotebook.Slot> = emptyList()
+        private set
+    private var pdfCache: PdfPageCache? = null
+    private val pdfClipPath = Path()
+    private val pdfBmpPaint = Paint(Paint.FILTER_BITMAP_FLAG or Paint.ANTI_ALIAS_FLAG)
+    private val pageNumPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.FILL; textAlign = Paint.Align.CENTER
+    }
+    private var visFirst = 0
+    private var visLast = -1
+    val isPdf get() = pdfSlots.isNotEmpty()
 
     /** Notifies the host when objects change so it can autosave them. */
     var onObjectsChanged: (() -> Unit)? = null
@@ -353,6 +374,99 @@ class DrawingView @JvmOverloads constructor(
         invalidate()
     }
 
+    /** Turns this canvas into a PDF notebook: one fixed sheet per PDF page. */
+    fun setPdf(slots: List<PdfNotebook.Slot>, file: java.io.File) {
+        pdfCache?.close()
+        pdfSlots = slots
+        pdfCache = PdfPageCache(file) { postInvalidate() }
+        page.set(PdfNotebook.bounds(slots))
+        if (width > 0) { fitPage(); sizedOnce = true } else sizedOnce = false
+        invalidate()
+    }
+
+    /** Frees the PDF renderer and its page bitmaps (call from onDestroy). */
+    fun releasePdf() {
+        pdfCache?.close()
+        pdfCache = null
+    }
+
+    /** Index of the sheet containing the world point, or -1 (gap / outside). */
+    fun slotAt(wx: Float, wy: Float): Int {
+        for (s in pdfSlots) if (s.sheet.contains(wx, wy)) return s.index
+        return -1
+    }
+
+    /** The sheet nearest to the world point (the one "you are on"). */
+    private fun nearestSlot(wx: Float, wy: Float): Int {
+        var best = 0
+        var bestD = Float.MAX_VALUE
+        for (s in pdfSlots) {
+            val dx = max(0f, max(s.sheet.left - wx, wx - s.sheet.right))
+            val dy = max(0f, max(s.sheet.top - wy, wy - s.sheet.bottom))
+            val d = dx * dx + dy * dy
+            if (d < bestD) { bestD = d; best = s.index }
+        }
+        return best
+    }
+
+    /** Sheet currently in the middle of the screen (1-based for display). */
+    fun currentPdfPage(): Int =
+        if (!isPdf || width == 0) 0 else nearestSlot((width / 2f - panX) / zoom, (height / 2f - panY) / zoom) + 1
+
+    /**
+     * Fits one whole sheet on screen. Works for both orientations: a phone or
+     * tablet in portrait is limited by width, in landscape by height, and the
+     * sheet is centred either way.
+     */
+    private fun fitSlot(i: Int) {
+        if (width == 0 || height == 0 || pdfSlots.isEmpty()) return
+        val s = pdfSlots[i.coerceIn(0, pdfSlots.size - 1)].sheet
+        val pad = 60f
+        zoom = min(width / (s.width() + 2 * pad), height / (s.height() + 2 * pad)).coerceIn(MIN_ZOOM, MAX_ZOOM)
+        panX = width / 2f - s.centerX() * zoom
+        panY = height / 2f - s.centerY() * zoom
+        clampPan()
+    }
+
+    /**
+     * The ORIENTATION button: switches every sheet between landscape (notes
+     * panel right of the PDF) and portrait (notes panel below it). The PDF
+     * itself never turns. Ink on the PDF stays on the PDF; ink in the notes
+     * panel travels with the panel, unchanged. Undo history is cleared because
+     * it was recorded in the old positions.
+     */
+    fun relayoutPdfPages(newSlots: List<PdfNotebook.Slot>) {
+        val old = pdfSlots
+        if (old.isEmpty() || old.size != newSlots.size) return
+        val onScreen = if (width > 0) nearestSlot((width / 2f - panX) / zoom, (height / 2f - panY) / zoom) else 0
+
+        clearSelection()
+        clearActiveObject()
+        current = null
+        shapePreview = null
+        laserSegments.clear()
+        activeLaser = null
+        mode = MODE_NONE
+
+        PdfNotebook.remap(old, newSlots, strokes, textObjects, imageObjects)
+
+        undoStack.clear()
+        redoStack.clear()
+        notifyHistory()
+
+        pdfSlots = newSlots
+        page.set(PdfNotebook.bounds(newSlots))
+        fitSlot(onScreen)
+        invalidate()
+    }
+
+    /** Jump to a sheet (0-based) and fit it. */
+    fun goToPdfPage(i: Int) {
+        if (!isPdf) return
+        fitSlot(i)
+        invalidate()
+    }
+
     fun canUndo() = undoStack.isNotEmpty()
     fun canRedo() = redoStack.isNotEmpty()
 
@@ -406,13 +520,38 @@ class DrawingView @JvmOverloads constructor(
     /** Reset zoom level while keeping the same canvas position/page in view. */
     fun viewportState(): Triple<Float, Float, Float> = Triple(panX, panY, zoom)
 
-    fun restoreViewport(savedPanX: Float, savedPanY: Float, savedZoom: Float) {
+    /**
+     * [savedW]/[savedH] are the view size the viewport was saved with. When the
+     * device was rotated in between, a PDF notebook re-fits the sheet you were
+     * on for the new orientation; other notebooks keep the same centre point.
+     */
+    fun restoreViewport(
+        savedPanX: Float, savedPanY: Float, savedZoom: Float,
+        savedW: Float = Float.NaN, savedH: Float = Float.NaN
+    ) {
         if (savedPanX.isNaN() || savedPanY.isNaN() || savedZoom.isNaN()) return
         post {
-            zoom = savedZoom.coerceIn(MIN_ZOOM, MAX_ZOOM)
-            panX = savedPanX
-            panY = savedPanY
-            clampPan()
+            val z = savedZoom.coerceIn(MIN_ZOOM, MAX_ZOOM)
+            val sizeKnown = !savedW.isNaN() && !savedH.isNaN() && savedW > 0f && savedH > 0f
+            val resized = sizeKnown && (abs(savedW - width) > 1f || abs(savedH - height) > 1f)
+            if (resized) {
+                val cx = (savedW / 2f - savedPanX) / z
+                val cy = (savedH / 2f - savedPanY) / z
+                val rotated = (savedW > savedH) != (width > height)
+                if (isPdf && rotated) {
+                    fitSlot(nearestSlot(cx, cy))
+                } else {
+                    zoom = z
+                    panX = width / 2f - cx * zoom
+                    panY = height / 2f - cy * zoom
+                    clampPan()
+                }
+            } else {
+                zoom = z
+                panX = savedPanX
+                panY = savedPanY
+                clampPan()
+            }
             invalidate()
         }
     }
@@ -424,6 +563,13 @@ class DrawingView @JvmOverloads constructor(
         // Resetting zoom must not send the user back to the first page/origin.
         val centerWorldX = (width / 2f - panX) / zoom
         val centerWorldY = (height / 2f - panY) / zoom
+
+        // PDF notebook: reset = fit the sheet you're on, whatever the orientation.
+        if (isPdf) {
+            fitSlot(nearestSlot(centerWorldX, centerWorldY))
+            invalidate()
+            return
+        }
 
         // Keep the existing/default reset zoom level.
         val refW = 2200f + 120f
@@ -576,6 +722,10 @@ class DrawingView @JvmOverloads constructor(
         if (!sizedOnce) {
             fitPage()
             sizedOnce = true
+        } else if (isPdf && oldw > 0 && oldh > 0 && (oldw > oldh) != (w > h)) {
+            // Rotated in place (portrait <-> landscape): fit the current sheet
+            // to the new shape instead of leaving it half off-screen.
+            fitSlot(nearestSlot((oldw / 2f - panX) / zoom, (oldh / 2f - panY) / zoom))
         } else if (oldw > 0 && oldh > 0) {
             // Requirement 6: keep the same world point centred after a rotation
             // or size change, so switching portrait <-> landscape doesn't jump.
@@ -591,6 +741,7 @@ class DrawingView @JvmOverloads constructor(
 
     private fun fitPage() {
         if (width == 0 || height == 0) return
+        if (isPdf) { fitSlot(0); return }
         zoom = (width / (page.width() + 120f)).coerceIn(MIN_ZOOM, MAX_ZOOM)
         panX = (width - page.width() * zoom) / 2f - page.left * zoom
         panY = 24f * density - page.top * zoom
@@ -612,7 +763,7 @@ class DrawingView @JvmOverloads constructor(
 
     private fun growPageFor(x: Float, y: Float) {
         when (pageMode) {
-            NoteStore.PAGE_LIMITED -> return   // fixed number of pages, never grows
+            NoteStore.PAGE_LIMITED, NoteStore.PAGE_PDF -> return   // fixed sheets, never grow
             NoteStore.PAGE_MULTI_INFINITE -> {
                 // Infinite stack of fixed-width A4-height pages. Extend by WHOLE
                 // page units so the page breaks never drift or create a partial
@@ -721,6 +872,12 @@ class DrawingView @JvmOverloads constructor(
 
         val drawingTool = tool != Tool.SELECT
         if (drawingTool) clearActiveObject()   // hide the object frame while drawing
+        // PDF notebook: the gaps between sheets aren't paper - touching there
+        // scrolls instead of leaving invisible ink behind.
+        if (isPdf && drawingTool && tool != Tool.LASER && slotAt(wx, wy) < 0) {
+            mode = MODE_PAN1
+            return
+        }
         if (stylusOnly && !stylus && drawingTool) {
             mode = MODE_PAN1
             return
@@ -826,8 +983,13 @@ class DrawingView @JvmOverloads constructor(
     ) {
         mode = MODE_DRAW
         drawingWithStylus = stylus
-        current = Stroke(ArrayList(64), color, width, eraser = false).also {
-            it.addPoint(wx, wy)
+        // Pens without a pressure sensor report a flat 1.0 - draw those at the
+        // normal constant width instead of a permanently "pressed" thick line.
+        val usePressure = stylus && pressure > 0f && pressure < 0.999f
+        pressEma = if (usePressure) pressure.coerceIn(0.02f, 1f) else 0.5f
+        val pr = if (usePressure) ArrayList<Float>(64) else null
+        current = Stroke(ArrayList(64), color, width, eraser = false, straight = false, pressures = pr).also {
+            if (usePressure) it.addPoint(wx, wy, pressureToWidth(pressEma)) else it.addPoint(wx, wy)
             it.extend()
         }
         // Requirement 4: the page extends only while a stroke is DRAWN near an
@@ -1036,10 +1198,27 @@ class DrawingView @JvmOverloads constructor(
         val py = c.points[n - 1]
         val dist = hypot(wx - px, wy - py)
         if (dist < 1.0f / zoom) return false
-        c.addPoint(wx, wy)
+        if (c.pressures != null) {
+            // light exponential smoothing so sensor jitter doesn't make the
+            // edge of the line wobble; 0-pressure samples (lift noise) are ignored
+            if (!pressure.isNaN() && pressure > 0f) {
+                pressEma += (pressure.coerceAtMost(1f) - pressEma) * 0.35f
+            }
+            c.addPoint(wx, wy, pressureToWidth(pressEma))
+        } else {
+            c.addPoint(wx, wy)
+        }
         growPageFor(wx, wy)
         return true
     }
+
+    /**
+     * Pressure (0..1) -> width multiplier. Medium pressure (~0.5) = the chosen
+     * pen size, a feather-light touch ~0.3x, full force ~1.6x. The slight curve
+     * gives finer control in the light range where handwriting usually sits.
+     */
+    private fun pressureToWidth(p: Float): Float =
+        0.25f + 1.35f * Math.pow(p.coerceIn(0f, 1f).toDouble(), 0.85).toFloat()
 
     private fun addLaserPoint(wx: Float, wy: Float) {
         val seg = activeLaser ?: return
@@ -1103,10 +1282,16 @@ class DrawingView @JvmOverloads constructor(
     }
 
     private fun finishStroke() {
-        val c = current ?: return
+        var c = current ?: return
         current = null
         // The stroke is committed exactly as it was drawn - no recognition and
-        // no smoothing pass. Only the automatic pressure taper shapes it.
+        // no smoothing pass. Stylus strokes keep their per-point pressure width;
+        // if the pen never actually varied its pressure, store a plain stroke.
+        c.pressures?.let { pr ->
+            if (pr.isNotEmpty() && (pr.maxOrNull()!! - pr.minOrNull()!!) < 0.02f) {
+                c = Stroke(c.points, c.color, c.width * pr[0], eraser = false, straight = false, pressures = null)
+            }
+        }
         c.seal()
         strokes.add(c)
         push(Action.Add(listOf(c)))
@@ -1656,6 +1841,43 @@ class DrawingView @JvmOverloads constructor(
         canvas.translate(panX, panY)
         canvas.scale(zoom, zoom)
 
+        if (isPdf) {
+            drawPdfSheets(canvas, bg, border)
+        } else {
+            drawPlainPage(canvas, bg, border)
+        }
+
+        drawLasers(canvas)
+
+        if (selectingRect || selected.isNotEmpty()) {
+            if (dashZoom != zoom) {
+                dashPaint.pathEffect = DashPathEffect(floatArrayOf(12f / zoom, 9f / zoom), 0f)
+                dashZoom = zoom
+            }
+            dashPaint.strokeWidth = 2f / zoom
+            if (selectingRect) canvas.drawRect(selRect, dashPaint)
+            if (selected.isNotEmpty()) {
+                canvas.drawRect(selBounds, dashPaint)
+                fillPaint.color = RED
+                val hr = 9f / zoom * density
+                canvas.drawRect(
+                    selBounds.right - hr, selBounds.bottom - hr,
+                    selBounds.right + hr, selBounds.bottom + hr, fillPaint
+                )
+            }
+        }
+
+        drawObjectFrame(canvas)
+
+        canvas.restore()
+
+        fillPaint.color = 0xAAD71921.toInt()
+        if (vThumb(tmpRect)) canvas.drawRoundRect(tmpRect, barThick, barThick, fillPaint)
+        if (hThumb(tmpRect)) canvas.drawRoundRect(tmpRect, barThick, barThick, fillPaint)
+    }
+
+    /** The original single-page renderer (infinite length / infinite pages). */
+    private fun drawPlainPage(canvas: Canvas, bg: Int, border: Int) {
         fillPaint.color = bg
         canvas.drawRect(page, fillPaint)
         linePaint.color = border
@@ -1723,34 +1945,133 @@ class DrawingView @JvmOverloads constructor(
             s.draw(canvas, strokePaint)
             strokePaint.alpha = 255
         }
+    }
 
-        drawLasers(canvas)
+    // =====================================================================
+    //  PDF notebook drawing
+    // =====================================================================
 
-        if (selectingRect || selected.isNotEmpty()) {
-            if (dashZoom != zoom) {
-                dashPaint.pathEffect = DashPathEffect(floatArrayOf(12f / zoom, 9f / zoom), 0f)
-                dashZoom = zoom
+    private fun drawPdfSheets(canvas: Canvas, bg: Int, border: Int) {
+        // World-space rectangle currently being repainted (the dirty clip).
+        if (canvas.getClipBounds(clipI)) visible.set(clipI) else visible.set(page)
+
+        // Sheets are stacked top-to-bottom, so the visible ones are contiguous.
+        visFirst = -1; visLast = -1
+        for (sl in pdfSlots) {
+            if (sl.sheet.bottom < visible.top - PdfNotebook.GAP) continue
+            if (sl.sheet.top > visible.bottom + PdfNotebook.GAP) break
+            if (visFirst < 0) visFirst = sl.index
+            visLast = sl.index
+        }
+        val cache = pdfCache
+        if (visFirst < 0) return
+        // Tell the renderer what is on screen (from the full viewport, not just
+        // the dirty clip) so off-screen pages are skipped in its queue.
+        cache?.let { c ->
+            val vt = (0f - panY) / zoom; val vb = (height - panY) / zoom
+            var f = -1; var l = -1
+            for (sl in pdfSlots) {
+                if (sl.sheet.bottom < vt) continue
+                if (sl.sheet.top > vb) break
+                if (f < 0) f = sl.index
+                l = sl.index
             }
-            dashPaint.strokeWidth = 2f / zoom
-            if (selectingRect) canvas.drawRect(selRect, dashPaint)
-            if (selected.isNotEmpty()) {
-                canvas.drawRect(selBounds, dashPaint)
-                fillPaint.color = RED
-                val hr = 9f / zoom * density
-                canvas.drawRect(
-                    selBounds.right - hr, selBounds.bottom - hr,
-                    selBounds.right + hr, selBounds.bottom + hr, fillPaint
-                )
-            }
+            if (f >= 0) { c.wantFirst = f; c.wantLast = l }
         }
 
-        drawObjectFrame(canvas)
+        pageNumPaint.textSize = 64f
+        pageNumPaint.color = if (dark) 0xFF6A6A6A.toInt() else 0xFF8A8A8A.toInt()
+        pdfClipPath.rewind()
+        for (i in visFirst..visLast) {
+            val sl = pdfSlots[i]
+            // the canvas sheet
+            fillPaint.color = bg
+            canvas.drawRect(sl.sheet, fillPaint)
+            linePaint.color = border
+            linePaint.strokeWidth = 1.5f / zoom
+            canvas.drawRect(sl.sheet, linePaint)
+            // the PDF page - always white paper
+            fillPaint.color = Color.WHITE
+            canvas.drawRect(sl.pdf, fillPaint)
+            if (cache != null) {
+                val tier = cache.tierFor(max(sl.pdf.width(), sl.pdf.height()) * zoom)
+                val bmp = cache.best(sl.index, tier)
+                if (bmp != null) PdfNotebook.drawPdfBitmap(canvas, bmp, sl, pdfBmpPaint)
+                if (!cache.has(sl.index, tier)) cache.request(sl.index, tier)
+                // warm the neighbours at the cheapest tier for smooth scrolling
+                if (i == visFirst && i > 0) cache.request(i - 1, 0)
+                if (i == visLast && i < pdfSlots.size - 1) cache.request(i + 1, 0)
+            }
+            linePaint.color = if (dark) 0xFF3A3A3A.toInt() else 0xFFCFCFCF.toInt()
+            canvas.drawRect(sl.pdf, linePaint)
+            // page number, centred in the gap under the sheet
+            canvas.drawText(
+                "${sl.index + 1} / ${pdfSlots.size}",
+                sl.sheet.centerX(), sl.sheet.bottom + PdfNotebook.GAP * 0.62f, pageNumPaint
+            )
+            pdfClipPath.addRect(sl.sheet, Path.Direction.CW)
+        }
 
-        canvas.restore()
+        // Ink, objects and previews only exist on the sheets, never in the gaps.
+        canvas.clipPath(pdfClipPath)
+        drawObjects(canvas)
 
-        fillPaint.color = 0xAAD71921.toInt()
-        if (vThumb(tmpRect)) canvas.drawRoundRect(tmpRect, barThick, barThick, fillPaint)
-        if (hThumb(tmpRect)) canvas.drawRoundRect(tmpRect, barThick, barThick, fillPaint)
+        val layer = canvas.saveLayer(visible, null)
+        if (!dark) {
+            // White canvas + white PDF paper: one pass, colours as stored.
+            drawInkInOrder(canvas, visible, paper = false)
+        } else {
+            // Dark canvas: themed ink around the PDF, paper-coloured ink on it.
+            canvas.save()
+            for (i in visFirst..visLast) canvas.clipOutRect(pdfSlots[i].pdf)
+            drawInkInOrder(canvas, visible, paper = false)
+            canvas.restore()
+            for (i in visFirst..visLast) {
+                val r = pdfSlots[i].pdf
+                if (!RectF.intersects(r, visible)) continue
+                canvas.save()
+                canvas.clipRect(r)
+                tmpRect.set(r)
+                if (tmpRect.intersect(visible)) drawInkInOrder(canvas, tmpRect, paper = true)
+                canvas.restore()
+            }
+        }
+        canvas.restoreToCount(layer)
+    }
+
+    /**
+     * Strokes in history order inside the current layer; erasers CLEAR only the
+     * ink so the PDF underneath is never rubbed out. [paper] = drawing onto the
+     * white PDF in dark mode, where theme-flipped black/white ink is shown in
+     * its light-paper colour.
+     */
+    private fun drawInkInOrder(canvas: Canvas, region: RectF, paper: Boolean) {
+        for (s in strokes) {
+            if (!RectF.intersects(s.bounds, region)) continue
+            if (s.eraser) {
+                eraserClearPaint.strokeWidth = s.width
+                s.draw(canvas, eraserClearPaint)
+            } else {
+                strokePaint.color = if (paper) PdfNotebook.swapBW(s.color) else s.color
+                strokePaint.style = Paint.Style.STROKE
+                s.draw(canvas, strokePaint)
+            }
+        }
+        current?.let { c ->
+            if (c.eraser) {
+                eraserClearPaint.strokeWidth = c.width
+                c.draw(canvas, eraserClearPaint)
+            } else {
+                strokePaint.color = if (paper) PdfNotebook.swapBW(c.color) else c.color
+                c.draw(canvas, strokePaint)
+            }
+        }
+        shapePreview?.let { sp ->
+            strokePaint.color = if (paper) PdfNotebook.swapBW(sp.color) else sp.color
+            strokePaint.alpha = 170
+            sp.draw(canvas, strokePaint)
+            strokePaint.alpha = 255
+        }
     }
 
     /**

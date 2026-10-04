@@ -165,7 +165,7 @@
          existing IDs so NotesActivity behaviour is unchanged. -->
     <LinearLayout
         android:id="@+id/notebookActions"
-        android:layout_width="260dp"
+        android:layout_width="336dp"
         android:layout_height="62dp"
         android:layout_gravity="bottom|center_horizontal"
         android:layout_marginBottom="20dp"
@@ -221,6 +221,37 @@
             android:includeFontPadding="false"
             android:letterSpacing="0.08"
             android:text="@string/open_notebook_short"
+            android:textAllCaps="true"
+            android:textColor="@color/pure_white"
+            android:textSize="11sp"
+            android:textStyle="bold" />
+
+        <View
+            android:id="@+id/notebookActionDivider2"
+            android:layout_width="1dp"
+            android:layout_height="42dp"
+            android:layout_gravity="center_vertical"
+            android:alpha="0.9"
+            android:background="@color/pure_white" />
+
+        <TextView
+            android:id="@+id/btnImportPdf"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:clickable="true"
+            android:contentDescription="@string/import_pdf_short"
+            android:drawableTop="@drawable/ic_pdf_white"
+            android:drawablePadding="-1dp"
+            android:focusable="true"
+            android:fontFamily="monospace"
+            android:gravity="center"
+            android:paddingTop="10dp"
+            android:translationY="2dp"
+            android:includeFontPadding="false"
+            android:letterSpacing="0.08"
+            android:text="@string/import_pdf_short"
             android:textAllCaps="true"
             android:textColor="@color/pure_white"
             android:textSize="11sp"
