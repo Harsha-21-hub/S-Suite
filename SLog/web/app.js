@@ -67,6 +67,9 @@ function friendlyError(e) {
   if (code.includes("invalid-email")) return "That email address looks wrong.";
   if (code.includes("too-many-requests")) return "Too many attempts. Wait a minute and try again.";
   if (code === "wrong-pin") return "Wrong registration PIN.";
+  if (code === "rules-outdated")
+    return "Your logs are deleted, but the database rules in Firebase are out of date, so your account entry can't be removed yet. " +
+      "Publish firestore.rules (Firebase console -> Firestore -> Rules), then press DELETE again.";
   if (code.includes("permission-denied")) return "Not allowed. Try signing out and in again.";
   return (e && e.message) || "Something went wrong. Check your connection.";
 }

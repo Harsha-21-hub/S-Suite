@@ -281,7 +281,8 @@ let deletingAccount = false;
  */
 export function listenProfile(uid, cb) {
   return onSnapshot(doc(db, "users", uid), (snap) => {
-    if (!snap.exists() && !snap.metadata.fromCache) {
+    // gone on the SERVER (not just cached, not this device's own unconfirmed change)
+    if (!snap.exists() && !snap.metadata.fromCache && !snap.metadata.hasPendingWrites) {
       if (!deletingAccount) fbSignOut(auth).catch(() => {}); // account deleted -> log out here too
       return;
     }
@@ -305,7 +306,18 @@ export async function deleteAccount(password) {
     const me = { uid: u.uid, email: emailOf(u), name: nameOf(u) };
     for (const d of snap.docs) await deleteOrLeave({ id: d.id, ...d.data() }, me);
     await waitForPendingWrites(db);
-    await deleteDoc(doc(db, "users", u.uid)); // resolves once the server has removed it
+    try {
+      await deleteDoc(doc(db, "users", u.uid)); // resolves once the server has removed it
+    } catch (e) {
+      // Only happens with database rules older than this app: the login is kept so nothing is
+      // left half-deleted. Publish firestore.rules, then Delete account again finishes the job.
+      if (e && e.code === "permission-denied") {
+        const err = new Error("rules-outdated");
+        err.code = "rules-outdated";
+        throw err;
+      }
+      throw e;
+    }
     await deleteUser(u);
   } finally {
     deletingAccount = false;

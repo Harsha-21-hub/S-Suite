@@ -177,7 +177,14 @@ object FirebaseRepo {
             fetchLogs(emailOf(user)).forEach { deleteOrLeave(it, user) }
             db.waitForPendingWrites().await() // make sure the deletes reach the server before the login goes
             // removing users/{uid} logs out every other device at once (see listenProfile)
-            users().document(user.uid).delete().await()
+            try {
+                users().document(user.uid).delete().await()
+            } catch (e: FirebaseFirestoreException) {
+                // Only with database rules older than this app: the login is kept so nothing is
+                // left half-deleted. Publish firestore.rules, then Delete account again finishes.
+                if (e.code == FirebaseFirestoreException.Code.PERMISSION_DENIED) throw RulesOutdatedException()
+                throw e
+            }
             user.delete().await()
         } finally {
             deletingAccount = false
@@ -337,7 +344,8 @@ object FirebaseRepo {
         users().document(uid).addSnapshotListener { snap, error ->
             if (error != null) { onGone(); return@addSnapshotListener }
             if (snap == null) return@addSnapshotListener
-            if (!snap.exists() && !snap.metadata.isFromCache) {
+            // gone on the SERVER (not just cached, not this device's own unconfirmed change)
+            if (!snap.exists() && !snap.metadata.isFromCache && !snap.metadata.hasPendingWrites()) {
                 // "Delete account" (on any device) removed the entry: log out here too -> login screen
                 if (!deletingAccount) auth.signOut()
                 return@addSnapshotListener
@@ -457,3 +465,10 @@ object FirebaseRepo {
 }
 
 class WrongPinException : Exception("Wrong registration PIN.")
+
+/** Deleting users/{uid} was refused: the database rules in Firebase are older than this app. */
+class RulesOutdatedException : Exception(
+    "Your logs are deleted, but the database rules in Firebase are out of date, so your account " +
+        "entry can't be removed yet. Publish firestore.rules (Firebase console -> Firestore -> Rules), " +
+        "then tap Delete again."
+)

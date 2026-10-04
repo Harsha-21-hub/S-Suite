@@ -90,6 +90,8 @@ class SLogViewModel(application: Application) : AndroidViewModel(application) {
                 FirebaseRepo.deleteAccount(password)
             } catch (e: com.google.firebase.auth.FirebaseAuthInvalidCredentialsException) {
                 _deleteAccountError.value = "Wrong password."
+            } catch (e: RulesOutdatedException) {
+                _deleteAccountError.value = e.message
             } catch (e: Exception) {
                 _deleteAccountError.value = e.localizedMessage ?: "Couldn't delete. Check your connection."
             } finally {
