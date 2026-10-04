@@ -85,8 +85,8 @@ Every `git push` redeploys the website automatically.
 - **Calendar**: in portrait it shows the current week; use the ↑ (DRAG) ↓ control to drag down
   for the whole month and up for one week. In landscape (and on laptops) the whole month is always
   shown, with no drag control.
-  Green ✓ = everything due that day ticked. Amber ✓ = every log at least partly done (counts for
-  the streak). ✕ = a past day where some log had no tick at all. Days before your logs existed get
+  Green ✓ = everything due that day ticked. Amber ✓ = partly done, at least one tick (counts for
+  the streak). ✕ = a past day with nothing ticked at all. Days before your logs existed get
   no mark, so older months keep their real marks.
 - **History stays as it was**: every day is judged with the logs and times it had *on that day*.
   A log added on the 25th only counts from the 25th; a time added (or a log switched off) today
@@ -96,7 +96,7 @@ Every `git push` redeploys the website automatically.
   crown = Max (best run ever, saved in the database, never lost), calendar = Monthly (best run this
   month, starts fresh each month), flame = Current (run up to today).
   A log counts for a day when at least one of its times is ticked (partly done counts); the whole
-  day counts when every log that was due is at least partly done.
+  day counts when at least one tick was made that day (partly done days count too).
 - **Milestones**: when a Max streak reaches 3, 10, 50, 100, 150, 200, 250, 300, 365 days (then
   every 50, and every year) an animated popup celebrates it. Each milestone shows once (remembered
   in the database, so not again on your other devices).

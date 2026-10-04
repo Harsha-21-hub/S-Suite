@@ -11,7 +11,7 @@ import kotlin.math.max
  *  current = run of complete days up to today (today counts once it's complete)
  *
  * A day counts for a log when at least ONE of its times that day was ticked (partly done counts).
- * The whole day counts when every log that was due had at least one tick.
+ * The whole day counts when at least one tick was made that day (partly done days count too).
  * Every day is judged with the logs and times that existed ON THAT DAY (see [LogPlan]), so adding
  * a log or a time today never changes the ticks, marks or streaks of earlier days.
  */
@@ -24,8 +24,8 @@ data class StreakStats(val month: Int = 0, val best: Int = 0, val current: Int =
 data class DayProgress(val done: Int, val total: Int, val logsStarted: Int = 0, val logsDue: Int = 0) {
     /** every time ticked (green ✓) */
     val isFull get() = total > 0 && done >= total
-    /** counts for the streak: every due log at least partly done */
-    val counts get() = logsDue > 0 && logsStarted >= logsDue
+    /** counts for the streak (amber ✓): at least one tick that day, on any log that was due */
+    val counts get() = total > 0 && done > 0
     val isPartial get() = done > 0 && !isFull
 }
 

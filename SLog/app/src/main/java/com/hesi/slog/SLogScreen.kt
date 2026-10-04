@@ -300,7 +300,7 @@ fun SLogScreen(
     }
 
     // ---------------------------------------------------------------- Calendar
-    val calendarSection: @Composable () -> Unit = {
+    val calendarSection: @Composable ColumnScope.() -> Unit = {
         Column {
             Box(modifier = Modifier.fillMaxWidth()) {
                 // Nothing-style avatar with initials ("Sorra Sri Harsha" -> SSH);
@@ -335,8 +335,8 @@ fun SLogScreen(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                // Whole-day streaks (Max, Monthly, Current): a day counts when every log that was
-                // due is at least partly done
+                // Whole-day streaks (Max, Monthly, Current): a day counts when at least one
+                // tick was made that day (partly done counts)
                 Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
                     StreakStat("Max", dayStats.best, DotGlyphs.CROWN, ndotFont, Color.White)
                     StreakStat("Monthly", dayStats.month, DotGlyphs.MONTH, ndotFont, Color.White)
@@ -454,7 +454,7 @@ fun SLogScreen(
                                     // judged with the logs and times that existed ON that day
                                     val progress = if (shownMonth == currentMonth) dayMarks[date] else null
                                     val isFull = progress?.isFull == true
-                                    // every due log at least partly done -> the day counts (amber ✓)
+                                    // at least one tick that day -> the day counts (amber ✓)
                                     val counts = progress?.counts == true
                                     val isPartial = progress?.isPartial == true
                                     val somethingDue = (progress?.total ?: 0) > 0
@@ -496,9 +496,9 @@ fun SLogScreen(
                                         when {
                                             // done = every time due that day was ticked
                                             isFull -> Icon(Icons.Default.Check, "Done", iconModifier, tint = Color.Green)
-                                            // every log at least partly done = counts for the streak
+                                            // partly done = counts for the streak
                                             counts -> Icon(Icons.Default.Check, "Partly done", iconModifier, tint = Color(0xFFFFB300))
-                                            // past day where some log had no tick at all = missed.
+                                            // past day with nothing ticked at all = missed.
                                             // Days before your logs existed get no mark.
                                             isPast && somethingDue ->
                                                 Icon(Icons.Default.Close, "Missed", iconModifier, tint = accent)
@@ -525,7 +525,7 @@ fun SLogScreen(
     }
 
     // -------------------------------------------------------------------- Logs
-    val logsSection: @Composable () -> Unit = {
+    val logsSection: @Composable ColumnScope.() -> Unit = {
         val selectedDateStr = selectedDate.format(DateUtils.dbFormatter)
         // Only today and the previous 2 days can be edited
         val isEditable = !(selectedDate.isBefore(today.minusDays(2)) || selectedDate.isAfter(today))

@@ -322,7 +322,7 @@ export function completeDays(plan, recs, uid) {
 
 /**
  * One day over every log that was on and existed that day:
- * {done, total} ticks, full = every time ticked, counts = every due log at least partly done.
+ * {done, total} ticks, full = every time ticked, counts = at least one tick that day (partly done counts).
  */
 export function dayProgress(plans, mine, key) {
   let done = 0, total = 0, started = 0, due = 0;
@@ -336,10 +336,10 @@ export function dayProgress(plans, mine, key) {
     done += n;
     if (n > 0) started++;
   }
-  return { done, total, full: total > 0 && done >= total, counts: due > 0 && started >= due };
+  return { done, total, full: total > 0 && done >= total, counts: total > 0 && done > 0 };
 }
 
-/** Days from fromKey to toKey on which every due log was at least partly done. */
+/** Days from fromKey to toKey with at least one tick (partly done days count). */
 export function completeWholeDays(plans, records, uid, fromKey, toKey = ymd(today())) {
   const out = new Set();
   if (!plans.length) return out;

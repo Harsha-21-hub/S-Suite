@@ -33,7 +33,7 @@ Three streaks for all logs together and for every single log, shown with dot-mat
 | **Current** (flame) | Run of days up to today |
 
 - A log counts for a day when at least one of its times is ticked (partly done counts)
-- The whole day counts when every log that was due is at least partly done
+- The whole day counts when at least one tick was made that day (partly done days count too)
 - An animated popup celebrates Max-streak milestones: 3, 10, 50, 100, 150, 200, 250, 300, 365 days and beyond
 
 ---
@@ -51,8 +51,8 @@ Every day is judged with the logs and times it had **on that day**.
 ### 📅 Calendar
 
 - Green ✓ = everything due that day was ticked
-- Amber ✓ = every log at least partly done (counts for the streak)
-- ✕ = a past day where some log had no tick at all
+- Amber ✓ = partly done, at least one tick (counts for the streak)
+- ✕ = a past day with nothing ticked at all
 - Portrait: current week, drag the **↑ DRAG ↓** control for the whole month
 - Landscape / laptop: whole month
 

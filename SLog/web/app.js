@@ -570,8 +570,8 @@ function renderCalendar(marks) {
       if (d < addDays(t, -2) || future) cls.push("faded");
       let mark = "";
       if (p.full) mark = `<span class="mark full">✓</span>`;                    // everything due was ticked
-      else if (p.counts) mark = `<span class="mark part">✓</span>`;             // every log partly done: counts
-      else if (past && p.total > 0) mark = `<span class="mark miss">✕</span>`;  // a log had no tick at all (days before your logs: no mark)
+      else if (p.counts) mark = `<span class="mark part">✓</span>`;             // partly done: counts for the streak
+      else if (past && p.total > 0) mark = `<span class="mark miss">✕</span>`;  // nothing ticked at all (days before your logs: no mark)
       else if (p.done > 0) mark = `<span class="part-dot"></span>`;             // today, part done
       html += `<button class="${cls.join(" ")}" data-day="${key}" ${future ? "disabled" : ""}>${dayNum}${mark}</button>`;
     }
