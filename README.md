@@ -121,6 +121,32 @@ A lightweight Windows media reconstruction and normalization tool designed to re
 
 ---
 
+### 📁 S Drive
+
+A file manager, music/video player and transfer app for compatible Android phones and Wear OS watches, with a browser-based file interface hosted locally by the phone or watch.
+
+**Highlights**
+- File manager with copy, cut, paste, rename, delete and multi-select actions
+- Category views for Downloads, Images, Videos, Audio, Documents, Apps and Archives
+- Video player with seeking gestures, speed control, subtitles, repeat/shuffle and sleep timer
+- Background music playback and software volume boost up to 300%
+- Shrink videos on the phone for smoother playback on a watch
+- Transfer files between watch and phone over Wi-Fi or Bluetooth
+- Browser-based PC upload/download page served by the device
+- Six-digit transfer PIN and an ON/OFF switch for transfers
+- Share files from other phone apps using **Share → S Drive**
+- Nothing-style black/white/red design with dot-matrix branding
+- Local-first operation; no cloud file-storage account required
+
+**Requirements**
+- Android phone: Android 10 or newer
+- Compatible Wear OS watch: minimum Android API 30
+- Wi-Fi recommended for faster transfers; Bluetooth is available as a fallback
+
+[Open S Drive](./SDrive)
+
+---
+
 ## 🚀 Releases
 
 Each app has its own GitHub release so the apps can be updated independently.
@@ -129,8 +155,9 @@ Each app has its own GitHub release so the apps can be updated independently.
 - **S Charge** — download the latest APK from the S Charge release.
 - **S Log** — download the latest APK from the S Log release.
 - **S-MediaReconstruct** — download the latest Windows executable from the S-MediaReconstruct release.
+- **S Drive** — distribute the Android phone and Wear OS APKs together in the S Drive release so their application ID and signing setup remain compatible for phone/watch communication.
 
-See the repository's **Releases** section for the latest versions.
+See the repository's **Releases** section for available versions.
 
 ---
 
@@ -138,7 +165,7 @@ See the repository's **Releases** section for the latest versions.
 
 S-Suite is designed with a local-first approach.
 
-The applications do not require a cloud account for their core functionality, and normal app data is kept on the device.
+S Notes, S Charge and S-MediaReconstruct do not require a cloud account for their core functionality. S Drive transfers files locally over Wi-Fi or Bluetooth and serves its browser interface from the phone or watch; use its local HTTP page only on a trusted network and keep the transfer PIN private.
 
 The exception is **S Log**, which syncs logs between devices: it uses an account and stores logs in your own Firebase project, protected by database rules and a registration PIN. It still works offline.
 
@@ -151,7 +178,11 @@ S-Suite/
 ├── SNotes/
 ├── SCharge/
 ├── SLog/
-└── SMediaReconstruct/
+├── SMediaReconstruct/
+├── SDrive/
+├── .gitignore
+└── README.md
+```
 
 Each application is maintained as a separate project with its own source code, resources, build configuration and release cycle.
 
