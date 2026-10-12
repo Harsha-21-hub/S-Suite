@@ -1,0 +1,48 @@
+.gradle/
+build/
+local.properties
+.idea/
+*.iml
+.DS_Store
+captures/
+.kotlin/
+
+# --- S Drive rules (managed by Clean-SDrive.ps1) ---
+# Gradle / Kotlin / IDE caches and generated build output
+.gradle/
+.kotlin/
+.idea/
+**/.gradle/
+**/.kotlin/
+**/.idea/
+build/
+**/build/
+captures/
+
+# Machine-specific Android SDK configuration (kept locally)
+local.properties
+
+# Signing credentials - never commit these
+/key_jks/hesi.jks
+/key_jks/
+**/key_jks/
+*.jks
+*.keystore
+*.p12
+*.pfx
+key.properties
+keystore.properties
+
+# Local PC runtime state (kept locally; do not commit local paths/IP addresses)
+/pc/sdrive-adb-path.txt
+/pc/sdrive-last-connect.txt
+/pc/sdrive-compiled.txt
+/pc/sdrive-last-web.txt
+
+# Generated Android release metadata and baseline profiles
+**/release/output-metadata.json
+**/release/baselineProfiles/
+# --- End S Drive rules ---
+
+# Generated release output
+**/release/
