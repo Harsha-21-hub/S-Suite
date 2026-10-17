@@ -1,0 +1,4 @@
+aiohttp>=3.9
+yt-dlp>=2024.1.1
+pystray>=0.19; sys_platform == "win32"
+pillow>=9; sys_platform == "win32"

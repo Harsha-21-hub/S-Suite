@@ -1,0 +1,18 @@
+{
+  "manifest_version": 3,
+  "name": "SDM Catcher",
+  "short_name": "SDM",
+  "version": "2.1.1",
+  "description": "SDM - S Download Manager: sends every browser download, video and torrent to SDM for full-speed downloading.",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAmHNuUJ5EnhLA9oe7/KCnBD+kWhf8T8Mfr/Qm7tFCnIUU6t5KN1IeTxwoaEETsSkvOj3z9j9aqk8AgqArfVR8dwN5fE/C/DDE/iCoIkuWVI+HGl/0gi12oZPOYLw9VwxqA5imp+xw7CWnckyOxfhKG5ScwMS1MTLUonJcZpd6f7LkRrdCkCcLMKEeDU5g6nWeoZbIA1HNxW7f3+vABHqDZMNzal/2upZKGUEHBQwDESjy/f/srI0wJ+oyaXKbK824yR7bOT9bCWVVZU3PA3kDxHDS9WWZ7nBYTjskHxNIlTbg9DscyYzFlvKu08frsgDAUYGZ+grCjGhEnV+DWc84NwIDAQAB",
+  "minimum_chrome_version": "116",
+  "permissions": ["downloads", "cookies", "contextMenus", "storage", "alarms", "nativeMessaging", "webRequest"],
+  "host_permissions": ["<all_urls>"],
+  "background": { "service_worker": "background.js" },
+  "action": {
+    "default_title": "SDM",
+    "default_popup": "popup.html",
+    "default_icon": { "16": "icons/icon16.png", "32": "icons/icon32.png", "48": "icons/icon48.png" }
+  },
+  "icons": { "16": "icons/icon16.png", "32": "icons/icon32.png", "48": "icons/icon48.png", "128": "icons/icon128.png" }
+}

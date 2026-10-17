@@ -1,0 +1,45 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <header>
+    <div class="brand"><span class="word">SDM</span><span class="rdot"></span></div>
+    <div class="status" id="status"><i></i><span>Checking</span></div>
+  </header>
+
+  <section class="card catch">
+    <div>
+      <div class="label">Catch downloads</div>
+      <div class="sub" id="catchsub">Every browser download goes to SDM</div>
+    </div>
+    <label class="toggle"><input type="checkbox" id="enabled"><span class="sw"></span></label>
+  </section>
+
+  <section class="card offline hidden" id="offline">
+    <div class="label">SDM isn't running</div>
+    <div class="sub">Downloads stay in the browser until it's back.</div>
+    <button class="btn red" id="start">Start SDM</button>
+  </section>
+
+  <div class="row">
+    <button class="btn solid" id="open">Open SDM</button>
+    <button class="btn" id="skip" title="Let the browser handle downloads for 60 seconds">Skip 60s</button>
+  </div>
+
+  <form class="add" id="addform" autocomplete="off">
+    <input id="addurl" placeholder="Paste a link or magnet…" spellcheck="false">
+    <button class="go" type="submit" title="Add">+</button>
+  </form>
+
+  <section class="media">
+    <div class="mhead"><span class="label">On this page</span><button class="btn sm" id="grabpage">Grab video</button></div>
+    <div id="list" class="list"><div class="none">Play a video on the page — streams show up here.</div></div>
+  </section>
+
+  <footer><span id="caught">0 caught</span><span>Ctrl+V works in the app too</span></footer>
+  <script src="popup.js"></script>
+</body>
+</html>

@@ -147,6 +147,29 @@ A file manager, music/video player and transfer app for compatible Android phone
 
 ---
 
+### ⬇️ SDM — S Download Manager
+
+A Windows download manager with parallel and resumable downloads, torrent and magnet-link support, video downloads, and browser integration.
+
+**Highlights**
+- HTTP, HTTPS and FTP downloads with up to 256 parallel connections per file
+- Resumes interrupted downloads and supports per-download connection limits
+- Built-in BitTorrent support for `.torrent` files and magnet links, powered by aria2
+- Video pages and streams through yt-dlp, including supported HLS and DASH sources
+- Browser extension integration for handing downloads to SDM, including supported logged-in downloads
+- Download queue, retry controls, download prioritization and total speed limits
+- System-tray controls for opening SDM, pausing/resuming downloads and quitting
+- Nothing OS–inspired interface
+
+**Requirements**
+- Windows for the packaged launcher and installer
+- Python 3.11 or newer when running from source
+- Chrome or Edge extension installation is optional
+
+[Open SDM](./SDM)
+
+---
+
 ## 🚀 Releases
 
 Each app has its own GitHub release so the apps can be updated independently.
@@ -156,6 +179,7 @@ Each app has its own GitHub release so the apps can be updated independently.
 - **S Log** — download the latest APK from the S Log release.
 - **S-MediaReconstruct** — download the latest Windows executable from the S-MediaReconstruct release.
 - **S Drive** — distribute the Android phone and Wear OS APKs together in the S Drive release so their application ID and signing setup remain compatible for phone/watch communication.
+- **SDM** — download the latest Windows release ZIP, which includes the launcher and torrent engine.
 
 See the repository's **Releases** section for available versions.
 
@@ -166,6 +190,8 @@ See the repository's **Releases** section for available versions.
 S-Suite is designed with a local-first approach.
 
 S Notes, S Charge and S-MediaReconstruct do not require a cloud account for their core functionality. S Drive transfers files locally over Wi-Fi or Bluetooth and serves its browser interface from the phone or watch; use its local HTTP page only on a trusted network and keep the transfer PIN private.
+
+SDM runs its download interface locally on `127.0.0.1` and uses a browser helper for optional browser integration. Review extension permissions and keep the local interface on the intended device.
 
 The exception is **S Log**, which syncs logs between devices: it uses an account and stores logs in your own Firebase project, protected by database rules and a registration PIN. It still works offline.
 
@@ -180,6 +206,7 @@ S-Suite/
 ├── SLog/
 ├── SMediaReconstruct/
 ├── SDrive/
+├── SDM/
 ├── .gitignore
 └── README.md
 ```
@@ -188,4 +215,4 @@ Each application is maintained as a separate project with its own source code, r
 
 ## 📄 License
 
-License information will be added when the S-Suite licensing terms are finalized.
+S-Suite-wide licensing information will be added when the ecosystem licensing terms are finalized. SDM includes its own MIT License; see `SDM/LICENSE` and each project’s license file where present.

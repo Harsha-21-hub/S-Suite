@@ -1,0 +1,58 @@
+name: Build Windows release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Build SDM.exe (native launcher, cross-compiled with zig)
+        run: |
+          pip install ziglang==0.17.0
+          cd launcher
+          cp ../sdm.ico .
+          python -m ziglang cc -target x86_64-windows-gnu -O2 -municode -Wl,--subsystem,windows -s \
+            sdm_launcher.c sdm.rc -o ../SDM.exe -luser32 -lshell32 -lkernel32
+          rm -f sdm.ico ../SDM.pdb
+
+      - name: Add the torrent engine (official aria2 1.37.0, SHA-256 verified)
+        run: |
+          curl -sSL -o aria2.zip https://github.com/aria2/aria2/releases/download/release-1.37.0/aria2-1.37.0-win-64bit-build1.zip
+          unzip -q aria2.zip -d aria2
+          mkdir -p bin
+          cp aria2/*/aria2c.exe bin/aria2c.exe
+          cp aria2/*/COPYING bin/aria2-COPYING.txt
+          cp aria2/*/LICENSE.OpenSSL bin/aria2-LICENSE.OpenSSL.txt
+          echo "be2099c214f63a3cb4954b09a0becd6e2e34660b886d4c898d260febfe9d70c2  bin/aria2c.exe" | sha256sum -c -
+
+      - name: Package
+        run: |
+          VER="${GITHUB_REF_NAME//\//-}"
+          mkdir -p dist/SDM
+          tar --exclude=./.git --exclude=./.github --exclude=./dist --exclude=./aria2 --exclude=./aria2.zip \
+              --exclude=./docs --exclude=./.gitignore --exclude=./.gitattributes -cf - . | tar -xf - -C dist/SDM
+          (cd dist && zip -qr9 "SDM-${VER}-windows.zip" SDM)
+          ls -la dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SDM-windows
+          path: dist/*.zip
+
+      - name: Publish GitHub release
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" dist/*.zip --title "SDM $GITHUB_REF_NAME" --generate-notes

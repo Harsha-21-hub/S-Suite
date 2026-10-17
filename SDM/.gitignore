@@ -1,0 +1,18 @@
+# Python
+__pycache__/
+*.pyc
+
+# created on each machine at runtime
+native/
+python_path.txt
+*.log
+
+# build outputs (made by the release workflow / launcher build)
+SDM.exe
+*.pdb
+bin/
+dist/
+
+# partial downloads, if you test inside the repo
+*.sdmpart
+*.fdlpart
